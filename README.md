@@ -13,8 +13,6 @@ cassette deck from a cyberpunk 1994.
 > Drop a folder of hand-picked songs → get a **Pandora-style AI radio
 > station** for that exact mood, running infinitely, locally.
 
-![cyberpunk cassette deck UI](docs/screenshot.png)
-
 ## What it does
 
 - **Local AI music generation radio** — full songs (vocals or instrumental)
