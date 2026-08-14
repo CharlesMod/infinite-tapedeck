@@ -399,6 +399,10 @@
           <div class="g-bar"><div class="g-fill" id="sys-vram"
             style="background:linear-gradient(90deg,var(--pink),var(--red))"></div></div>
           <span class="g-min" id="sys-vram-n">—</span></div>
+        <div class="g-row"><span class="g-name">PRESS</span>
+          <div class="g-bar"><div class="g-fill" id="sys-press"
+            style="background:var(--vfd)"></div></div>
+          <span class="g-min" id="sys-press-n">—</span></div>
         <div id="deck-line">DECK · <span id="deck-msg">listening for the daemon…</span></div>
       </div>
 
@@ -581,6 +585,9 @@ async function refreshGauge() {
     $("pack-take").setAttribute("r", 17 + Math.min(27, pl.tracks / 40 * 27));
     $("played-label").textContent =
       pl.tracks + " TAKES · " + pl.minutes.toFixed(0) + " MIN";
+    const ps = s.press_speed || 0;
+    $("sys-press").style.width = Math.min(100, ps / 1.1 * 100) + "%";
+    $("sys-press-n").textContent = ps.toFixed(2) + "×";
     const g = $("gauge");
     g.innerHTML = "";
     for (const [v, info] of Object.entries(s.veins)) {

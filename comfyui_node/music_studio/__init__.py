@@ -292,8 +292,14 @@ async def status(request):
             played_n += 1
             played_s += m.get("duration_s", 0.0)
     keepers = len(os.listdir(p["keepers"])) if os.path.isdir(p["keepers"]) else 0
+    # press speed: audio-seconds banked in the last hour vs wall clock —
+    # the honest ×realtime number, idle sag included
+    hour_ago = time.time() - 3600
+    pressed = sum(m.get("duration_s", 0.0) for m in recs.values()
+                  if m.get("created", 0) >= hour_ago)
     return web.json_response({
         "station": stations.active(),
+        "press_speed": round(pressed / 3600, 2),
         "played": {"tracks": played_n, "minutes": round(played_s / 60, 1)},
         "veins": {v: {"name": c.get("name", f"Vein {v}"),
                       "tracks": per.get(v, {}).get("tracks", 0),

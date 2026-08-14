@@ -58,6 +58,7 @@ your endpoint offers; `llm_base: null` disables the LLM entirely.
 - `llm_base` / `llm_model`: any OpenAI-compatible endpoint, used for caption
   variety and lyrics. Omit both and the radio runs on essence-card seeds.
 - `sibling_hosts`: other ComfyUI instances that outrank the radio on this GPU.
+All thresholds are optional config too: `min_take_s`, `lyric_cap`, `caption_batch`, `bundle_queue_target`, `tank_target_tracks`, `relief_step`, `relief_max`.
 - AI captions (optional, big): downloads
   [Music Flamingo](https://huggingface.co/nvidia/music-flamingo-2601-hf) on
   first use; needs `bitsandbytes accelerate` installed.

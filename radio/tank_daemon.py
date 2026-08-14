@@ -34,7 +34,7 @@ COMFY_OUT = f"{BASE}/ComfyUI/output"
 
 _cfg = {"comfy_host": "http://127.0.0.1:8188", "sibling_hosts": [],
         "llm_base": "http://127.0.0.1:8080", "llm_model": None,
-        "steps": 30, "tank_target_s": 10800, "caption_batch": 5}
+        "steps": 30, "tank_target_s": 10800}
 try:
     with open(f"{BASE}/radio/config.json") as _f:
         _cfg.update(json.load(_f))
@@ -42,42 +42,18 @@ except FileNotFoundError:
     pass
 M3 = _cfg["comfy_host"]
 SIBLINGS = list(_cfg["sibling_hosts"])
-# Single-machine default: the LLM (llama-swap et al.) shares the one card
-# with the generator. Captions and lyrics are written in batches per LLM
-# residency so the swap tax amortizes. llm_base=None disables the LLM and
-# the sampler falls back to essence-card seeds.
+# Single-machine default: the LLM shares the one card with the generator;
+# bundles are written in batches per residency and banked to disk so a
+# residency almost never blocks production. llm_base=None disables the LLM.
 LLM_URL = (_cfg["llm_base"] or "").rstrip("/") or None
 LLM_MODEL = _cfg["llm_model"]
-CAPTION_BATCH = int(_cfg["caption_batch"])
-MIN_TAKE_S = int(_cfg.get("min_take_s", 45))
-TANK_TARGET_TRACKS = int(_cfg.get("tank_target_tracks", 20))
-LYRIC_CAP = float(_cfg.get("lyric_cap", 0.25))
-# Adaptive bar: every critic reject eases that vein's bar a little so dead
-# air self-limits; the next accept snaps it back to the calibrated level.
-RELIEF_STEP = float(_cfg.get("relief_step", 0.008))
-RELIEF_MAX = float(_cfg.get("relief_max", 0.05))
-_relief = {}                  # vein -> current threshold relief
+CAPTION_BATCH = int(_cfg.get("caption_batch", 10))
+BUNDLE_QUEUE_TARGET = int(_cfg.get("bundle_queue_target", 20))  # pre-written bundles to keep banked on disk
+BUNDLE_FILE = f"{BASE}/radio/bundles.jsonl"
+MIN_TAKE_S = int(_cfg.get("min_take_s", 45))  # cull true stubs; length ambition lives in captions
+TANK_TARGET_TRACKS = int(_cfg.get("tank_target_tracks", 20))  # generate whenever fewer than this many are banked
+LYRIC_CAP = float(_cfg.get("lyric_cap", 0.25))  # hard cap: sung takes ≤ 25% of the banked spool
 
-STEPS = int(_cfg["steps"])
-CFG = 1.7
-TOP_K = 50
-TANK_TARGET_S = int(_cfg["tank_target_s"])
-FOREIGN_VRAM_MB = 3000        # non-ComfyUI VRAM above this = game running
-LOOP_SLEEP = 60               # between top-up checks when tank is full/held
-BACKOFF = 120                 # after a failed/preempted generation
-
-ONESHOT = bool(os.environ.get("TANK_ONESHOT"))
-TEST_SHORT = bool(os.environ.get("TANK_TEST_SHORT"))
-
-_stop = False
-
-
-def _sigterm(*_):
-    global _stop
-    _stop = True
-
-
-# ---------------------------------------------------------------- utilities
 
 def lyric_veins(cards):
     return {v for v, c in cards.items()
@@ -105,7 +81,33 @@ def structural_tags(target_s):
             body.append("[bridge]")
     body.append("[outro]")
     return "\n\n".join(body)
+# Adaptive bar (Dean's design): every critic reject eases that vein's bar a
+# little so dead air self-limits; the next accept snaps it back to the
+# calibrated level. Relief is tactical, never a redefinition of taste.
+RELIEF_STEP = float(_cfg.get("relief_step", 0.008))
+RELIEF_MAX = float(_cfg.get("relief_max", 0.05))
+_relief = {}                  # vein -> current threshold relief
 
+STEPS = int(_cfg["steps"])
+CFG = 1.7
+TOP_K = 50
+TANK_TARGET_S = int(_cfg["tank_target_s"])
+FOREIGN_VRAM_MB = 3000        # non-ComfyUI VRAM above this = game running
+LOOP_SLEEP = 60               # between top-up checks when tank is full/held
+BACKOFF = 120                 # after a failed/preempted generation
+
+ONESHOT = bool(os.environ.get("TANK_ONESHOT"))
+TEST_SHORT = bool(os.environ.get("TANK_TEST_SHORT"))
+
+_stop = False
+
+
+def _sigterm(*_):
+    global _stop
+    _stop = True
+
+
+# ---------------------------------------------------------------- utilities
 
 def http_json(url, payload=None, timeout=15):
     body = json.dumps(payload).encode() if payload is not None else None
@@ -116,8 +118,20 @@ def http_json(url, payload=None, timeout=15):
         return json.loads(raw) if raw else {}
 
 
+STATE_FILE = f"{BASE}/radio/daemon_state.json"
+
+
 def log(msg):
+    """Every log line doubles as the deck's live status readout — the GUI
+    must always be able to answer 'why am I waiting?'"""
     print(f"[tank] {msg}", flush=True)
+    try:
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"msg": msg, "ts": int(time.time())}, f)
+        os.replace(tmp, STATE_FILE)
+    except Exception:
+        pass
 
 
 def queue_busy(host):
@@ -182,7 +196,6 @@ _llm_model_cache = None
 
 
 def _resolve_model():
-    """llm_model unset -> first model the endpoint offers."""
     global _llm_model_cache
     if LLM_MODEL:
         return LLM_MODEL
@@ -292,6 +305,54 @@ def fallback_caption(vein, card):
         "reprise — before its outro. ", 1)
     return seed_caption, bpm, target_s
 
+
+def load_bundle_queue(slug):
+    """Bundles are a buffered commodity like takes: pre-written to disk so
+    an LLM residency almost never blocks production. Survives restarts."""
+    mine, others = [], []
+    if os.path.exists(BUNDLE_FILE):
+        with open(BUNDLE_FILE) as f:
+            for line in f:
+                try:
+                    b = json.loads(line)
+                except Exception:
+                    continue
+                (mine if b.get("station") == slug else others).append(b)
+    return mine, others
+
+
+def save_bundle_queue(slug, mine, others):
+    tmp = BUNDLE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        for b in others + mine:
+            f.write(json.dumps(b) + "\n")
+    os.replace(tmp, BUNDLE_FILE)
+
+
+# recent verdicts per vein — a vein that keeps losing gets benched entirely
+_recent = {}
+_benched = {}
+BENCH_WINDOW = 8
+BENCH_MIN_ATTEMPTS = 6
+BENCH_S = 6 * 3600
+
+
+def record_verdict(vein, accepted):
+    h = _recent.setdefault(vein, [])
+    h.append(1 if accepted else 0)
+    del h[:-BENCH_WINDOW]
+    if len(h) >= BENCH_MIN_ATTEMPTS and sum(h) / len(h) < 0.25:
+        _benched[vein] = time.time() + BENCH_S
+        _recent[vein] = []
+        log(f"BENCHED vein {vein}: {sum(h)}/{len(h)} recent accepts — "
+            f"sitting out {BENCH_S//3600}h (its GPU time goes to veins that land)")
+
+
+def bench_excludes():
+    now = time.time()
+    return {v for v, until in _benched.items() if until > now}
+
+
 def refill_bundles(cards, per, per_n, count, weights_path):
     """One LLM residency, several bundles: free the generator, write
     CAPTION_BATCH caption/lyric sets across the neediest veins, unload.
@@ -303,7 +364,8 @@ def refill_bundles(cards, per, per_n, count, weights_path):
     lv = lyric_veins(cards)
     picks = []
     for _ in range(CAPTION_BATCH):
-        v = pick_vein(cards, sim, weights_path, cap_excludes(cards, sim_n, n))
+        excl = cap_excludes(cards, sim_n, n) | bench_excludes()
+        v = pick_vein(cards, sim, weights_path, excl)
         sim[v] = sim.get(v, 0.0) + 200.0  # assume a take lands, move on
         sim_n[v] = sim_n.get(v, 0) + 1
         n += 1
@@ -315,7 +377,8 @@ def refill_bundles(cards, per, per_n, count, weights_path):
         caption, bpm, target_s = sample_caption(v, card)
         lyr = (sample_lyrics(card) if v in lv
                else structural_tags(target_s))
-        out.append((v, caption, lyr, bpm, target_s))
+        out.append({"vein": v, "caption": caption, "lyrics": lyr,
+                    "bpm": bpm, "target_s": target_s})
     unload_llm()
     return out
 
@@ -385,9 +448,11 @@ def sample_lyrics(card):
         f"Write original lyrics for a song in this style: {card['essence']}\n"
         "Voice: earnest, concrete everyday imagery, zero irony. Invent a "
         "fresh specific mundane moment as the theme.\n"
-        "Imagery matters doubly: the generator reads lyric text as mood, so "
-        "keep the imagery inside the style's world (rural/Americana markers "
-        "pull arrangements toward country, urban ones toward pop, etc).\n"
+        "Imagery world: 90s suburban-indoor — apartments, parking lots, "
+        "payphones, TV static, mixtapes, late buses, fluorescent stores. "
+        "NO rural/Americana markers (porches, gardens, dirt roads, trucks, "
+        "whiskey) — the generator hears those as country and twangs the "
+        "whole arrangement.\n"
         "Structure with section tags: [intro] [verse] [chorus] [verse] "
         "[chorus] [instrumental] [bridge] [chorus] [outro] — the tags are "
         "executable song structure, so use all of them. Under 260 words.\n"
@@ -663,7 +728,7 @@ def main():
     stations.ensure_registry()
     cache = {}
     last_slug = None
-    bundles = []
+    bundles, other_bundles = [], []
 
     while not _stop:
         slug = stations.active()
@@ -675,13 +740,26 @@ def main():
         p, cards, critic = loaded
         if slug != last_slug:
             log(f"station: {slug} ({len(cards)} vein(s)), "
-                f"target {TANK_TARGET_S/3600:.1f}h, steps {STEPS}")
+                f"target {TANK_TARGET_TRACKS} takes, steps {STEPS}")
             last_slug = slug
-            bundles = []  # bundles are per-station; stale ones are wrong moods
+            bundles, other_bundles = load_bundle_queue(slug)
+            if bundles:
+                log(f"{len(bundles)} pre-written bundles on disk")
 
         janitor(p["meta"], p["tank"], p["keepers"])
         total, per, count, per_n = tank_seconds(p["meta"])
         if count >= TANK_TARGET_TRACKS:
+            # idle window: the card is free and nobody needs takes — bank
+            # bundles instead, so future residencies never block production
+            if len(bundles) < BUNDLE_QUEUE_TARGET and not hold_reason():
+                log(f"spool full — pre-writing bundles "
+                    f"({len(bundles)}/{BUNDLE_QUEUE_TARGET} banked)")
+                bundles += refill_bundles(cards, per, per_n, count,
+                                          p["weights"])
+                for b in bundles:
+                    b["station"] = slug
+                save_bundle_queue(slug, bundles, other_bundles)
+                continue
             log(f"spool full ({count} takes banked, {total/60:.0f} min)")
             if ONESHOT:
                 return
@@ -703,13 +781,24 @@ def main():
                 card = cards[vein]
                 caption, bpm, target_s = fallback_caption(vein, card)
                 log(f"EMERGENCY take for waiting listener: {card['name']}")
-                bundles = [(vein, caption, structural_tags(target_s),
-                            bpm, target_s)]
+                bundles = [{"vein": vein, "caption": caption,
+                            "lyrics": structural_tags(target_s),
+                            "bpm": bpm, "target_s": target_s,
+                            "station": slug}]
             else:
                 log(f"writing {CAPTION_BATCH} bundles (LLM residency)")
                 bundles = refill_bundles(cards, per, per_n, count,
                                          p["weights"])
-        vein, caption, lyrics, bpm, target_s = bundles.pop(0)
+                for b in bundles:
+                    b["station"] = slug
+                save_bundle_queue(slug, bundles, other_bundles)
+        b = bundles.pop(0)
+        save_bundle_queue(slug, bundles, other_bundles)
+        vein = b["vein"]
+        caption, lyrics = b["caption"], b["lyrics"]
+        bpm, target_s = b["bpm"], b["target_s"]
+        if vein not in cards:
+            continue  # cards changed since this bundle was written
         card = cards[vein]
         if TEST_SHORT:
             target_s = 45
@@ -731,12 +820,14 @@ def main():
             continue
 
         dur = duration_of(path)
-        # Absolute stub floor, NOT target-coupled: natural takes run shorter
-        # than aspirational targets however rich the caption; a target-coupled
-        # floor rejects the whole distribution and starves the radio.
+        # Absolute stub floor, NOT target-coupled: the model's natural takes
+        # run ~60-135s however rich the caption; a floor pinned to the
+        # aspirational target rejects the whole distribution and starves the
+        # radio. Targets still pull length upward via the caption text.
         if dur < MIN_TAKE_S:
             os.unlink(path)
             cool_vein(vein)
+            record_verdict(vein, False)
             log(f"REJECT-stub {card['name']} {dur:.0f}s "
                 f"(< {MIN_TAKE_S}s) — vein cools {COOLDOWN_S}s")
             if ONESHOT:
@@ -761,6 +852,7 @@ def main():
                     "caption": caption, "lyrics": lyrics,
                     "created": int(time.time()), "consumed": False,
                 }) + "\n")
+            record_verdict(vein, True)
             eased = _relief.pop(vein, 0.0)
             log(f"ACCEPT {card['name']} {dur:.0f}s score {score:.3f} "
                 f"(thr {thr:.3f}) -> {os.path.basename(dest)}"
@@ -768,6 +860,7 @@ def main():
         else:
             os.unlink(path)
             cool_vein(vein)
+            record_verdict(vein, False)
             _relief[vein] = min(RELIEF_MAX,
                                 _relief.get(vein, 0.0) + RELIEF_STEP)
             log(f"REJECT {card['name']} {dur:.0f}s score {score:.3f} "
