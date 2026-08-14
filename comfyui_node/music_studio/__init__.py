@@ -114,8 +114,38 @@ async def next_track(request):
         return web.json_response({"empty": True,
                                   "hint": "station not captured yet"})
     mult = _weights(p)
-    _, avail = _read_state(p)
+    recs, avail = _read_state(p)
     if not avail:
+        # a listener is waiting on an empty spool: tell the daemon (it will
+        # cut an emergency take), and NEVER sit silent — replay the archive
+        # (keepers + consumed takes the janitor hasn't collected) meanwhile.
+        try:
+            with open(f"{BASE}/radio/LISTENER_WAITING", "w") as f:
+                f.write(str(int(time.time())))
+        except OSError:
+            pass
+        pool = []
+        for t in recs.values():
+            for root in (p["tank"], p["keepers"]):
+                if os.path.exists(os.path.join(root, t["file"])):
+                    pool.append(t)
+                    break
+        if pool:
+            t = random.choice(pool)
+            cards_r = {}
+            try:
+                cards_r = _cards(p)
+            except FileNotFoundError:
+                pass
+            return web.json_response({
+                "id": t["id"], "vein": t["vein"], "replay": True,
+                "vein_name": t.get("vein_name",
+                                   cards_r.get(t["vein"], {}).get("name", "?")),
+                "url": f"/music_studio/audio/{t['file']}",
+                "duration_s": t["duration_s"], "bpm": t.get("bpm"),
+                "score": t.get("score"), "caption": t.get("caption", ""),
+                "lyrics": t.get("lyrics", ""), "left_in_tank": 0,
+            })
         return web.json_response({"empty": True,
                                   "hint": "fresh tape is being synthesized "
                                           "— give the deck a few minutes"})

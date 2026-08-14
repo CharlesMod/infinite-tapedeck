@@ -447,12 +447,13 @@ function show(t, replay) {
   const accent = VEIN_COLORS[t.vein] || "#888";
   document.documentElement.style.setProperty("--accent", accent);
   $("vein-name").textContent = t.vein_name;
-  $("title").textContent = "TAKE " + t.id.split("_")[1].slice(0, 6);
+  $("title").textContent = (t.replay ? "ARCHIVE · TAKE " : "TAKE ")
+    + t.id.split("_")[1].slice(0, 6);
   $("stats").textContent =
     `${Math.floor(t.duration_s / 60)}:${String(Math.round(t.duration_s) % 60).padStart(2, "0")}` +
     ` · ${t.bpm} BPM · FIT ${t.score}` +
     (t.left_in_tank != null ? ` · ${t.left_in_tank} ON SPOOL` : "") +
-    (replay ? " · REWIND" : "");
+    (t.replay ? " · REPLAY WHILE FRESH TAPE WINDS" : replay ? " · REWIND" : "");
   $("desc").textContent = t.caption;
   $("desc").classList.remove("open");
   const ly = $("lyrics");
@@ -565,8 +566,11 @@ async function refreshGauge() {
     // the supply pack IS the spool: wound tape grows as takes bank
     const totalMin = Object.values(s.veins)
       .reduce((a, v) => a + (v.minutes || 0), 0);
-    $("pack-supply").setAttribute("r", 18 + Math.min(26, totalMin / 45 * 26));
-    $("spool-label").textContent = totalMin.toFixed(1) + " MIN";
+    const totalTakes = Object.values(s.veins)
+      .reduce((a, v) => a + (v.tracks || 0), 0);
+    $("pack-supply").setAttribute("r", 18 + Math.min(26, totalTakes / 20 * 26));
+    $("spool-label").textContent =
+      totalTakes + " TAKES · " + totalMin.toFixed(0) + " MIN";
     const g = $("gauge");
     g.innerHTML = "";
     for (const [v, info] of Object.entries(s.veins)) {

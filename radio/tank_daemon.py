@@ -50,6 +50,7 @@ LLM_URL = (_cfg["llm_base"] or "").rstrip("/") or None
 LLM_MODEL = _cfg["llm_model"]
 CAPTION_BATCH = int(_cfg["caption_batch"])
 MIN_TAKE_S = int(_cfg.get("min_take_s", 45))
+TANK_TARGET_TRACKS = int(_cfg.get("tank_target_tracks", 20))
 # Adaptive bar: every critic reject eases that vein's bar a little so dead
 # air self-limits; the next accept snaps it back to the calibrated level.
 RELIEF_STEP = float(_cfg.get("relief_step", 0.008))
@@ -217,6 +218,50 @@ def unload_llm():
     except Exception:
         pass  # ttl will get it eventually; generation may just retry
 
+
+def listener_waiting():
+    """The deck touches this file whenever /next finds an empty spool."""
+    try:
+        ts = int(open(f"{BASE}/radio/LISTENER_WAITING").read().strip())
+        return time.time() - ts < 120
+    except (OSError, ValueError):
+        return False
+
+
+def best_accepting_vein(cards, meta_path):
+    """The vein most likely to land a take, judged by its own record."""
+    counts = {v: 0 for v in cards}
+    try:
+        with open(meta_path) as f:
+            for line in f:
+                try:
+                    m = json.loads(line)
+                except Exception:
+                    continue
+                if not m.get("event") and m.get("vein") in counts:
+                    counts[m["vein"]] += 1
+    except OSError:
+        pass
+    # lyric veins need an LLM residency — too slow for an emergency
+    quick = {v: c for v, c in counts.items()
+             if "lyrics" not in cards[v].get("vocals", "").lower()}
+    pool = quick or counts
+    return max(pool, key=pool.get)
+
+
+def fallback_caption(vein, card):
+    """The seed-caption path from sample_caption, without touching the LLM."""
+    env = card["envelope"]
+    bpm = random.randint(int(env["bpm"][0]), int(env["bpm"][1]))
+    lo, hi = env["length_s"]
+    target_s = random.randint(int(lo), int(hi))
+    mins = target_s // 60
+    seed_caption = card["caption_seed"].replace(
+        "Global Metadata: ",
+        f"Global Metadata: An approximately {mins}-minute piece with a "
+        "complete multi-section arc — intro, themes, development, peak, "
+        "reprise — before its outro. ", 1)
+    return seed_caption, bpm, target_s
 
 def refill_bundles(cards, per, weights_path):
     """One LLM residency, several bundles: free the generator, write
@@ -464,12 +509,14 @@ def tank_seconds(meta_path):
                     recs[m["id"]] = m
     per = {}
     total = 0.0
+    count = 0
     for rid, m in recs.items():
         if rid in consumed or m.get("consumed"):
             continue
         per[m["vein"]] = per.get(m["vein"], 0.0) + m["duration_s"]
         total += m["duration_s"]
-    return total, per
+        count += 1
+    return total, per, count
 
 
 def duration_of(path):
@@ -593,9 +640,9 @@ def main():
             bundles = []  # bundles are per-station; stale ones are wrong moods
 
         janitor(p["meta"], p["tank"], p["keepers"])
-        total, per = tank_seconds(p["meta"])
-        if total >= TANK_TARGET_S:
-            log(f"tank full ({total/3600:.2f}h)")
+        total, per, count = tank_seconds(p["meta"])
+        if count >= TANK_TARGET_TRACKS:
+            log(f"spool full ({count} takes banked, {total/60:.0f} min)")
             if ONESHOT:
                 return
             time.sleep(LOOP_SLEEP)
@@ -608,8 +655,18 @@ def main():
             continue
 
         if not bundles:
-            log(f"writing {CAPTION_BATCH} bundles (LLM residency)")
-            bundles = refill_bundles(cards, per, p["weights"])
+            if total < 60 and listener_waiting():
+                # someone is sitting at a silent deck: skip the batch
+                # residency, cut ONE fast seed-caption take from the vein
+                # that historically lands, and get audio moving
+                vein = best_accepting_vein(cards, p["meta"])
+                card = cards[vein]
+                caption, bpm, target_s = fallback_caption(vein, card)
+                log(f"EMERGENCY take for waiting listener: {card['name']}")
+                bundles = [(vein, caption, "", bpm, target_s)]
+            else:
+                log(f"writing {CAPTION_BATCH} bundles (LLM residency)")
+                bundles = refill_bundles(cards, per, p["weights"])
         vein, caption, lyrics, bpm, target_s = bundles.pop(0)
         card = cards[vein]
         if TEST_SHORT:
