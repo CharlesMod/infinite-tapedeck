@@ -21,7 +21,7 @@ import time
 BASE = os.environ.get("TAPEDECK_BASE") or os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = f"{BASE}/analysis"
-PY = sys.executable
+PY = f"{BASE}/venv/bin/python"
 PROGRESS = f"{SCRIPTS}/import_progress.json"
 
 sys.path.insert(0, f"{BASE}/radio")
@@ -270,9 +270,10 @@ def main():
                 # resume. Yields are normal operation, not failures.
                 note(f"[{name}] yielded to radio — resuming when tank "
                      f"≥ {RESUME_ABOVE_S}s")
-                while not _stop:
-                    if stations.tank_level(stations.active()) >= RESUME_ABOVE_S:
-                        break
+                # SIGTERM exits the process outright, so a plain loop is
+                # correct here (a `_stop` flag was the daemon's idiom, and
+                # borrowing it uninitialized killed every capture at first yield)
+                while stations.tank_level(stations.active()) < RESUME_ABOVE_S:
                     time.sleep(60)
                 note(f"[{name}] tank refilled — taking the GPU back")
                 continue

@@ -469,9 +469,11 @@ def refill_bundles(cards, per, per_n, count, weights_path, p):
     for _ in range(CAPTION_BATCH):
         excl = cap_excludes(cards, sim_n, n)
         v = pick_vein(cards, sim, weights_path, excl)
-        sim[v] = sim.get(v, 0.0) + 200.0  # assume a take lands, move on
-        sim_n[v] = sim_n.get(v, 0) + 1
-        n += 1
+        # a bundle composes TWICE (uses=2) — the cap simulation must count
+        # both takes, or reuse smuggles lyric share past the cap
+        sim[v] = sim.get(v, 0.0) + 400.0
+        sim_n[v] = sim_n.get(v, 0) + 2
+        n += 2
         picks.append(v)
     free_music3()
     while _needs_rewrite:
@@ -904,7 +906,30 @@ def main():
                 for b in bundles:
                     b["station"] = slug
                 save_bundle_queue(slug, bundles, other_bundles)
-        b = bundles.pop(0)
+        # generation-time cap gate — the hard guarantee, whatever the queue
+        # holds: lyric bundles rotate to the back while the live spool is at
+        # or over the cap, and if EVERY queued bundle is capped, write fresh
+        # instrumental ones instead of waiting
+        lv_now = lyric_veins(cards)
+        picked = None
+        for _ in range(len(bundles)):
+            cand = bundles.pop(0)
+            sung = sum(per_n.get(v, 0) for v in lv_now)
+            if (cand["vein"] in lv_now and count > 0
+                    and sung / count >= LYRIC_CAP):
+                bundles.append(cand)
+                continue
+            picked = cand
+            break
+        if picked is None:
+            log("all queued bundles lyric-capped — writing instrumentals")
+            fresh = refill_bundles(cards, per, per_n, count, p["weights"], p)
+            for fb in fresh:
+                fb["station"] = slug
+            bundles = fresh + bundles
+            save_bundle_queue(slug, bundles, other_bundles)
+            continue
+        b = picked
         b["uses"] = b.get("uses", 1) - 1
         if b["uses"] > 0:
             bundles.append(dict(b))  # back of the queue for its second song

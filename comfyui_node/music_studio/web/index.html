@@ -286,7 +286,7 @@
       <div id="cassette">
         <div id="tape-label">
           <span id="vein-name">insert tape</span>
-          <span id="side">SIDE ∞ · CrO₂ · 32kHz</span>
+          <span id="side">SIDE ∞ · CrO₂ · TYPE IV</span>
         </div>
         <div id="mech-wrap">
           <svg id="mech" viewBox="0 0 520 120" preserveAspectRatio="xMidYMid meet">
@@ -687,8 +687,8 @@ function renderSetlist() {
   let shown = 0;
   for (const t of setlist) {
     if (q && !t.path.toLowerCase().includes(q)) continue;
+    if (shown >= 400) break;
     shown++;
-    if (shown > 400) break;
     const d = document.createElement("div");
     d.className = "sl-track" + (t.excluded ? " excluded" : "")
       + (t.analyzed ? "" : " unanalyzed")
