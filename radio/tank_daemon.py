@@ -277,12 +277,42 @@ def free_music3():
         time.sleep(2)
 
 
-def unload_llm():
-    """Hand the card back: evict the LLM before the next generation."""
+def llm_resident_mb():
+    """VRAM currently held by llama-server children."""
     try:
-        urllib.request.urlopen(LLM_URL + "/unload", timeout=65).read()
+        out = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,used_memory",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5).stdout
+        total = 0
+        for line in out.strip().splitlines():
+            pid_s, mem_s = line.split(",")
+            try:
+                with open(f"/proc/{int(pid_s)}/cmdline", "rb") as f:
+                    if b"llama-server" in f.read():
+                        total += int(mem_s)
+            except (OSError, ValueError):
+                continue
+        return total
     except Exception:
-        pass  # ttl will get it eventually; generation may just retry
+        return 0
+
+
+def unload_llm():
+    """Hand the card back — VERIFIED. A silently-failed eviction once left
+    the lyricist squatting 5 GB: the DiT could stage only 206 MB and one
+    take took 9 minutes streaming weights from RAM every step."""
+    for attempt in (1, 2):
+        try:
+            urllib.request.urlopen(LLM_URL + "/unload", timeout=65).read()
+        except Exception:
+            pass
+        for _ in range(10):
+            if llm_resident_mb() < 500:
+                return True
+            time.sleep(2)
+    log("LLM eviction FAILED — generations will crawl until ttl clears it")
+    return False
 
 
 def listener_waiting():
@@ -980,6 +1010,9 @@ def main():
         # final gate right before taking the card
         if hold_reason():
             continue
+        if llm_resident_mb() > 1000:
+            log("lyricist still on card — evicting before generation")
+            unload_llm()
         # max_duration is a cap the encoder undershoots — never let it bind;
         # length is driven by the caption's stated duration and arc instead
         path, status = generate(caption, lyrics, seed, 300, steps_now)
