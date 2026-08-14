@@ -90,6 +90,9 @@ RELIEF_MAX = float(_cfg.get("relief_max", 0.05))
 _relief = {}                  # vein -> current threshold relief
 
 STEPS = int(_cfg["steps"])
+STARVED_STEPS = int(_cfg.get("starved_steps", 20))
+STARVED_BELOW_TAKES = int(_cfg.get("starved_below_takes", 5))
+DIT_MODEL = _cfg.get("dit_model", "minimax_music3_dit_fp16.safetensors")
 CFG = 1.7
 TOP_K = 50
 TANK_TARGET_S = int(_cfg["tank_target_s"])
@@ -639,13 +642,13 @@ def load_critic(analysis):
 
 # --------------------------------------------------------------- generation
 
-def build_graph(caption, lyrics, seed, max_duration):
+def build_graph(caption, lyrics, seed, max_duration, steps=None):
     return {
         "1": {"class_type": "CLIPLoader", "inputs": {
             "clip_name": "minimax_music3_text_encoder_pruned_int8_convrot.safetensors",
             "type": "minimax", "device": "default"}},
         "2": {"class_type": "UNETLoader", "inputs": {
-            "unet_name": "minimax_music3_dit_fp16.safetensors",
+            "unet_name": DIT_MODEL,
             "weight_dtype": "default"}},
         "3": {"class_type": "VAELoader", "inputs": {
             "vae_name": "minimax_music3_dav.safetensors"}},
@@ -659,7 +662,8 @@ def build_graph(caption, lyrics, seed, max_duration):
             "seconds": ["4", 1], "batch_size": 1}},
         "7": {"class_type": "KSampler", "inputs": {
             "model": ["2", 0], "positive": ["4", 0], "negative": ["5", 0],
-            "latent_image": ["6", 0], "seed": seed, "steps": STEPS,
+            "latent_image": ["6", 0], "seed": seed,
+            "steps": steps or STEPS,
             "cfg": CFG, "sampler_name": "euler", "scheduler": "simple",
             "denoise": 1.0}},
         "8": {"class_type": "VAEDecodeAudioTiled", "inputs": {
@@ -671,10 +675,11 @@ def build_graph(caption, lyrics, seed, max_duration):
     }
 
 
-def generate(caption, lyrics, seed, max_duration):
+def generate(caption, lyrics, seed, max_duration, steps=None):
     pid = http_json(M3 + "/prompt",
                     {"prompt": build_graph(caption, lyrics, seed,
-                                           max_duration)})["prompt_id"]
+                                           max_duration,
+                                           steps)})["prompt_id"]
     t0 = time.time()
     while time.time() - t0 < 1200:
         if _stop:
@@ -915,15 +920,24 @@ def main():
         seed = random.randrange(2 ** 31)
         lyr_mode = ("words" if vein in lyric_veins(cards)
                     else "tags" if lyrics else "none")
+        # First takes into an empty spool are the showcase pair — full
+        # quality, always: an empty queue is the demo moment (Dean's rule).
+        # Catch-up steps apply only between the wow pair and a healthy spool.
+        showcase = count < 2
+        starved = count < STARVED_BELOW_TAKES
+        steps_now = STEPS if (showcase or not starved) else STARVED_STEPS
+        mode = (" steps=30 (showcase)" if showcase and starved
+                else f" steps={STARVED_STEPS} (catch-up)"
+                if steps_now != STEPS else "")
         log(f"generating: vein={card['name']} bpm={bpm} "
-            f"len<={target_s}s seed={seed} lyrics={lyr_mode}")
+            f"len<={target_s}s seed={seed} lyrics={lyr_mode}{mode}")
 
         # final gate right before taking the card
         if hold_reason():
             continue
         # max_duration is a cap the encoder undershoots — never let it bind;
         # length is driven by the caption's stated duration and arc instead
-        path, status = generate(caption, lyrics, seed, 300)
+        path, status = generate(caption, lyrics, seed, 300, steps_now)
         if not path:
             log(f"generation {status}; backoff {BACKOFF}s")
             time.sleep(BACKOFF)
@@ -958,7 +972,7 @@ def main():
                     "file": os.path.basename(dest), "duration_s": dur,
                     "score": round(score, 3), "threshold": round(thr, 3),
                     "relief": round(_relief.get(vein, 0.0), 3),
-                    "bpm": bpm, "seed": seed, "steps": STEPS,
+                    "bpm": bpm, "seed": seed, "steps": steps_now,
                     "caption": caption, "lyrics": lyrics,
                     "created": int(time.time()), "consumed": False,
                 }) + "\n")
