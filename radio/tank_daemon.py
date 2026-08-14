@@ -18,6 +18,7 @@ non-success history status and costs one backoff, nothing more.
 import json
 import os
 import random
+import re
 import signal
 import subprocess
 import sys
@@ -329,48 +330,152 @@ def save_bundle_queue(slug, mine, others):
     os.replace(tmp, BUNDLE_FILE)
 
 
-# recent verdicts per vein — a vein that keeps losing gets benched entirely
+# recent verdicts per vein, with detail — a vein that keeps losing does NOT
+# sit out (a radio must never lose a genre): its essence card gets REWRITTEN
+# by the LLM at the next residency, evidence in hand.
 _recent = {}
-_benched = {}
-BENCH_WINDOW = 8
-BENCH_MIN_ATTEMPTS = 6
-BENCH_S = 6 * 3600
+_needs_rewrite = set()
+_rewrites_today = {}
+FAIL_WINDOW = 8
+FAIL_MIN_ATTEMPTS = 6
+REWRITES_PER_DAY = 3
+REWRITE_RETRY_S = 2 * 3600
 
 
-def record_verdict(vein, accepted):
+def record_verdict(vein, accepted, dur=None, score=None, thr=None):
     h = _recent.setdefault(vein, [])
-    h.append(1 if accepted else 0)
-    del h[:-BENCH_WINDOW]
-    if len(h) >= BENCH_MIN_ATTEMPTS and sum(h) / len(h) < 0.25:
-        _benched[vein] = time.time() + BENCH_S
-        _recent[vein] = []
-        log(f"BENCHED vein {vein}: {sum(h)}/{len(h)} recent accepts — "
-            f"sitting out {BENCH_S//3600}h (its GPU time goes to veins that land)")
+    h.append({"ok": accepted, "dur": dur, "score": score, "thr": thr})
+    del h[:-FAIL_WINDOW]
+    oks = sum(1 for x in h if x["ok"])
+    if len(h) >= FAIL_MIN_ATTEMPTS and oks / len(h) < 0.25:
+        _needs_rewrite.add(vein)
+        log(f"vein {vein} failing ({oks}/{len(h)} accepts) — card rewrite "
+            "queued for next LLM residency")
 
 
-def bench_excludes():
-    now = time.time()
-    return {v for v, until in _benched.items() if until > now}
+def failure_summary(vein):
+    h = _recent.get(vein, [])
+    parts = []
+    for x in h:
+        if x["ok"]:
+            parts.append(f"ACCEPT {x['dur']:.0f}s")
+        elif x["score"] is None:
+            parts.append(f"STUB {x['dur']:.0f}s (too short)")
+        else:
+            parts.append(f"MISS {x['dur']:.0f}s score {x['score']:.2f} "
+                         f"(needed {x['thr']:.2f})")
+    return "; ".join(parts)
 
 
-def refill_bundles(cards, per, per_n, count, weights_path):
+def corpus_evidence(analysis, vein):
+    """What this vein's real corpus tracks sound like, per the captioner."""
+    try:
+        with open(f"{analysis}/veins.json") as f:
+            central = json.load(f)["veins"][vein]["central_tracks"][:6]
+        caps = {}
+        with open(f"{analysis}/captions.jsonl") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                    caps[r["path"]] = r["caption"]
+                except Exception:
+                    continue
+        return [caps[t][:450] for t in central if t in caps][:2]
+    except Exception:
+        return []
+
+
+def rewrite_card(vein, card, analysis, cards_path):
+    """The self-repair loop: hand the LLM the failing card, the failure
+    pattern, the corpus ground truth, and the physics lessons — get back a
+    better card. The old card is preserved in history, always revertible."""
+    day = int(time.time() // 86400)
+    n, last, last_day = _rewrites_today.get(vein, (0, 0, day))
+    if last_day != day:
+        n = 0
+    if n >= REWRITES_PER_DAY and time.time() - last < REWRITE_RETRY_S:
+        return False
+    evidence = corpus_evidence(analysis, vein)
+    prompt = (
+        "A music-generation vein keeps failing and you must rewrite its "
+        "essence card. Return STRICT JSON with exactly these keys: "
+        '{"essence": str, "caption_seed": str, "fixed_core": [str, ...]}\n\n'
+        f"CURRENT CARD:\n{json.dumps({k: card[k] for k in ('essence', 'caption_seed', 'fixed_core')}, indent=1)}\n\n"
+        f"RECENT RESULTS: {failure_summary(vein)}\n\n"
+        "KNOWN PHYSICS of the generator: track length follows ARRANGEMENT "
+        "RICHNESS — captions with many concrete, named sections produce "
+        "full-length takes; sparse ones produce 15-30s stubs. State the "
+        "duration early in Global Metadata. Genre anchors must be explicit "
+        "(the model drifts genre on weak language). caption_seed must keep "
+        "the three-section format: Global Metadata / Vocal Details / "
+        "Arrangement.\n"
+        + (("\nWHAT THE REAL CORPUS TRACKS SOUND LIKE (ground truth — the "
+            "card must chase THIS):\n" + "\n---\n".join(evidence) + "\n")
+           if evidence else "")
+        + "\nSTUBS mean: make the Arrangement longer, denser, more "
+          "sequential. MISSES mean: the essence has drifted from the ground "
+          "truth — pull it back. Output ONLY the JSON."
+    )
+    text = llm_chat(prompt, temperature=0.7, max_tokens=1200)
+    if not text:
+        return False
+    try:
+        m = re.search(r"\{.*\}", text, re.S)
+        new = json.loads(m.group(0))
+        assert isinstance(new["essence"], str) and new["essence"]
+        assert all(h in new["caption_seed"] for h in
+                   ("Global Metadata:", "Vocal Details:", "Arrangement:"))
+        assert isinstance(new["fixed_core"], list)
+    except Exception as e:
+        log(f"card rewrite for {vein} unparseable ({e!r:.60}) — kept old card")
+        return False
+    with open(f"{analysis}/essence_cards_history.jsonl", "a") as f:
+        f.write(json.dumps({"ts": int(time.time()), "vein": vein,
+                            "old": {k: card[k] for k in
+                                    ("essence", "caption_seed", "fixed_core")},
+                            "new": new,
+                            "reason": failure_summary(vein)}) + "\n")
+    card.update(new)
+    with open(cards_path) as f:
+        doc = json.load(f)
+    doc["veins"][vein].update(new)
+    tmp = cards_path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(doc, f, indent=1)
+    os.replace(tmp, cards_path)
+    _rewrites_today[vein] = (n + 1, time.time(), day)
+    _recent[vein] = []
+    _relief.pop(vein, None)
+    _cooldown.pop(vein, None)
+    log(f"REWROTE card for vein {vein} (rewrite {n + 1} today) — "
+        "fresh slate, no genre sits out")
+    return True
+
+
+def refill_bundles(cards, per, per_n, count, weights_path, p):
     """One LLM residency, several bundles: free the generator, write
     CAPTION_BATCH caption/lyric sets across the neediest veins, unload.
-    The lyric cap is enforced pick-by-pick against the simulated spool, so
-    a single batch cannot smuggle the ratio past 25%."""
+    Failing veins get their cards REWRITTEN first, in the same residency —
+    the LLM is already resident, so repair costs no extra swap. The lyric
+    cap is enforced pick-by-pick against the simulated spool."""
     sim = dict(per)
     sim_n = dict(per_n)
     n = count
     lv = lyric_veins(cards)
     picks = []
     for _ in range(CAPTION_BATCH):
-        excl = cap_excludes(cards, sim_n, n) | bench_excludes()
+        excl = cap_excludes(cards, sim_n, n)
         v = pick_vein(cards, sim, weights_path, excl)
         sim[v] = sim.get(v, 0.0) + 200.0  # assume a take lands, move on
         sim_n[v] = sim_n.get(v, 0) + 1
         n += 1
         picks.append(v)
     free_music3()
+    while _needs_rewrite:
+        v = _needs_rewrite.pop()
+        if v in cards:
+            rewrite_card(v, cards[v], p["analysis"],
+                         os.path.join(p["analysis"], "essence_cards.json"))
     out = []
     for v in picks:
         card = cards[v]
@@ -755,7 +860,7 @@ def main():
                 log(f"spool full — pre-writing bundles "
                     f"({len(bundles)}/{BUNDLE_QUEUE_TARGET} banked)")
                 bundles += refill_bundles(cards, per, per_n, count,
-                                          p["weights"])
+                                          p["weights"], p)
                 for b in bundles:
                     b["station"] = slug
                 save_bundle_queue(slug, bundles, other_bundles)
@@ -788,7 +893,7 @@ def main():
             else:
                 log(f"writing {CAPTION_BATCH} bundles (LLM residency)")
                 bundles = refill_bundles(cards, per, per_n, count,
-                                         p["weights"])
+                                         p["weights"], p)
                 for b in bundles:
                     b["station"] = slug
                 save_bundle_queue(slug, bundles, other_bundles)
@@ -827,7 +932,7 @@ def main():
         if dur < MIN_TAKE_S:
             os.unlink(path)
             cool_vein(vein)
-            record_verdict(vein, False)
+            record_verdict(vein, False, dur=dur)
             log(f"REJECT-stub {card['name']} {dur:.0f}s "
                 f"(< {MIN_TAKE_S}s) — vein cools {COOLDOWN_S}s")
             if ONESHOT:
@@ -852,7 +957,7 @@ def main():
                     "caption": caption, "lyrics": lyrics,
                     "created": int(time.time()), "consumed": False,
                 }) + "\n")
-            record_verdict(vein, True)
+            record_verdict(vein, True, dur=dur, score=score, thr=thr)
             eased = _relief.pop(vein, 0.0)
             log(f"ACCEPT {card['name']} {dur:.0f}s score {score:.3f} "
                 f"(thr {thr:.3f}) -> {os.path.basename(dest)}"
@@ -860,7 +965,7 @@ def main():
         else:
             os.unlink(path)
             cool_vein(vein)
-            record_verdict(vein, False)
+            record_verdict(vein, False, dur=dur, score=score, thr=thr)
             _relief[vein] = min(RELIEF_MAX,
                                 _relief.get(vein, 0.0) + RELIEF_STEP)
             log(f"REJECT {card['name']} {dur:.0f}s score {score:.3f} "
