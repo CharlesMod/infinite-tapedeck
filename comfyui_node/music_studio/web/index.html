@@ -104,7 +104,10 @@
   .guide { fill: #0a0715; stroke: #3a2f60; stroke-width: 2; }
   #head rect { fill: #1b1530; stroke: #574a8a; stroke-width: 1.5; }
   #spool-label { fill: var(--amber); font-size: 11px; letter-spacing: .15em;
-    text-anchor: end; opacity: .9; }
+    text-anchor: start; opacity: .9; }
+  #played-label { fill: var(--vfd); font-size: 11px; letter-spacing: .15em;
+    text-anchor: end; opacity: .75; }
+  #pack-supply, #pack-take { fill: #100b18; }
   #counter {
     position: absolute; right: .45rem; top: .35rem;
     font-size: .95rem; letter-spacing: .12em; color: var(--amber);
@@ -326,7 +329,8 @@
                 <line x1="370.5" y1="65.5" x2="389.5" y2="54.5"/>
               </g>
             </g>
-            <text id="spool-label" x="472" y="112">0 MIN</text>
+            <text id="spool-label" x="12" y="112">0 TAKES · 0 MIN</text>
+            <text id="played-label" x="508" y="112">0 TAKES · 0 MIN</text>
           </svg>
           <span id="counter">0000</span>
         </div>
@@ -457,8 +461,11 @@ function show(t, replay) {
   $("desc").textContent = t.caption;
   $("desc").classList.remove("open");
   const ly = $("lyrics");
-  ly.textContent = t.lyrics || "";
-  ly.classList.toggle("has", !!t.lyrics);
+  // tag-only structural sheets aren't songsheets — show only sung words
+  const sung = (t.lyrics || "").split("\n")
+    .some(l => l.trim() && !l.trim().startsWith("["));
+  ly.textContent = sung ? t.lyrics : "";
+  ly.classList.toggle("has", sung);
   ly.classList.remove("open");
   $("keep").classList.remove("done");
   $("keep").textContent = "★ keep";
@@ -525,9 +532,6 @@ player.addEventListener("timeupdate", () => {
   $("counter").textContent =
     String(Math.floor(s / 60)).padStart(2, "0") +
     String(Math.floor(s % 60)).padStart(2, "0");
-  // take-up pack winds through the current take
-  const prog = player.duration ? s / player.duration : 0;
-  $("pack-take").setAttribute("r", 17 + 12 * prog);
 });
 
 let vu = null;
@@ -568,9 +572,15 @@ async function refreshGauge() {
       .reduce((a, v) => a + (v.minutes || 0), 0);
     const totalTakes = Object.values(s.veins)
       .reduce((a, v) => a + (v.tracks || 0), 0);
+    // black tape winds onto each reel from its own ledger: unplayed on the
+    // supply (input) side, played history on the take-up (output) side
     $("pack-supply").setAttribute("r", 18 + Math.min(26, totalTakes / 20 * 26));
     $("spool-label").textContent =
       totalTakes + " TAKES · " + totalMin.toFixed(0) + " MIN";
+    const pl = s.played || { tracks: 0, minutes: 0 };
+    $("pack-take").setAttribute("r", 17 + Math.min(27, pl.tracks / 40 * 27));
+    $("played-label").textContent =
+      pl.tracks + " TAKES · " + pl.minutes.toFixed(0) + " MIN";
     const g = $("gauge");
     g.innerHTML = "";
     for (const [v, info] of Object.entries(s.veins)) {

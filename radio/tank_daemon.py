@@ -51,6 +51,7 @@ LLM_MODEL = _cfg["llm_model"]
 CAPTION_BATCH = int(_cfg["caption_batch"])
 MIN_TAKE_S = int(_cfg.get("min_take_s", 45))
 TANK_TARGET_TRACKS = int(_cfg.get("tank_target_tracks", 20))
+LYRIC_CAP = float(_cfg.get("lyric_cap", 0.25))
 # Adaptive bar: every critic reject eases that vein's bar a little so dead
 # air self-limits; the next accept snaps it back to the calibrated level.
 RELIEF_STEP = float(_cfg.get("relief_step", 0.008))
@@ -77,6 +78,34 @@ def _sigterm(*_):
 
 
 # ---------------------------------------------------------------- utilities
+
+def lyric_veins(cards):
+    return {v for v, c in cards.items()
+            if "lyrics" in c.get("vocals", "").lower()}
+
+
+def cap_excludes(cards, per_n, count):
+    """Veins barred from the next pick by the lyric cap."""
+    lv = lyric_veins(cards)
+    if not lv or count <= 0:
+        return set()
+    sung = sum(per_n.get(v, 0) for v in lv)
+    return lv if sung / count >= LYRIC_CAP else set()
+
+
+def structural_tags(target_s):
+    """Tag-only lyric sheet for instrumentals. The lyric vein outperforms
+    because section tags are executable structure and structure is length —
+    so every vein gets the scaffold, without putting words in its mouth."""
+    mins = max(1, int(target_s) // 60)
+    body = ["[intro]"]
+    for i in range(max(2, mins + 1)):
+        body.append("[instrumental]")
+        if i == 1:
+            body.append("[bridge]")
+    body.append("[outro]")
+    return "\n\n".join(body)
+
 
 def http_json(url, payload=None, timeout=15):
     body = json.dumps(payload).encode() if payload is not None else None
@@ -263,22 +292,29 @@ def fallback_caption(vein, card):
         "reprise — before its outro. ", 1)
     return seed_caption, bpm, target_s
 
-def refill_bundles(cards, per, weights_path):
+def refill_bundles(cards, per, per_n, count, weights_path):
     """One LLM residency, several bundles: free the generator, write
-    CAPTION_BATCH caption/lyric sets across the neediest veins, unload."""
+    CAPTION_BATCH caption/lyric sets across the neediest veins, unload.
+    The lyric cap is enforced pick-by-pick against the simulated spool, so
+    a single batch cannot smuggle the ratio past 25%."""
     sim = dict(per)
+    sim_n = dict(per_n)
+    n = count
+    lv = lyric_veins(cards)
     picks = []
     for _ in range(CAPTION_BATCH):
-        v = pick_vein(cards, sim, weights_path)
+        v = pick_vein(cards, sim, weights_path, cap_excludes(cards, sim_n, n))
         sim[v] = sim.get(v, 0.0) + 200.0  # assume a take lands, move on
+        sim_n[v] = sim_n.get(v, 0) + 1
+        n += 1
         picks.append(v)
     free_music3()
     out = []
     for v in picks:
         card = cards[v]
         caption, bpm, target_s = sample_caption(v, card)
-        lyr = (sample_lyrics(card)
-               if "lyrics" in card.get("vocals", "").lower() else "")
+        lyr = (sample_lyrics(card) if v in lv
+               else structural_tags(target_s))
         out.append((v, caption, lyr, bpm, target_s))
     unload_llm()
     return out
@@ -508,15 +544,17 @@ def tank_seconds(meta_path):
                 elif "id" in m:
                     recs[m["id"]] = m
     per = {}
+    per_n = {}
     total = 0.0
     count = 0
     for rid, m in recs.items():
         if rid in consumed or m.get("consumed"):
             continue
         per[m["vein"]] = per.get(m["vein"], 0.0) + m["duration_s"]
+        per_n[m["vein"]] = per_n.get(m["vein"], 0) + 1
         total += m["duration_s"]
         count += 1
-    return total, per, count
+    return total, per, count, per_n
 
 
 def duration_of(path):
@@ -585,15 +623,17 @@ def cool_vein(vein):
     _cooldown[vein] = time.time() + COOLDOWN_S
 
 
-def pick_vein(cards, per, weights_path):
+def pick_vein(cards, per, weights_path, exclude=frozenset()):
     """Most-underfilled vein by RELATIVE deficit, so early fills interleave
     across veins instead of grinding the largest one to target first.
-    Recently-rejected veins sit out a cooldown — a vein that keeps missing
-    must not monopolize the card while the others could be banking takes."""
+    Recently-rejected veins sit out a cooldown; `exclude` (the lyric cap) is
+    hard — an excluded vein is not picked even if it is the only one cold."""
     w = effective_weights(cards, weights_path)
     now = time.time()
     deficits = {}
     for label in cards:
+        if label in exclude and len(exclude) < len(cards):
+            continue
         target = max(1.0, w[label] * TANK_TARGET_S)
         deficits[label] = max(0.0, target - per.get(label, 0.0)) / target
     warm = {l: d for l, d in deficits.items() if _cooldown.get(l, 0) < now}
@@ -640,7 +680,7 @@ def main():
             bundles = []  # bundles are per-station; stale ones are wrong moods
 
         janitor(p["meta"], p["tank"], p["keepers"])
-        total, per, count = tank_seconds(p["meta"])
+        total, per, count, per_n = tank_seconds(p["meta"])
         if count >= TANK_TARGET_TRACKS:
             log(f"spool full ({count} takes banked, {total/60:.0f} min)")
             if ONESHOT:
@@ -663,17 +703,21 @@ def main():
                 card = cards[vein]
                 caption, bpm, target_s = fallback_caption(vein, card)
                 log(f"EMERGENCY take for waiting listener: {card['name']}")
-                bundles = [(vein, caption, "", bpm, target_s)]
+                bundles = [(vein, caption, structural_tags(target_s),
+                            bpm, target_s)]
             else:
                 log(f"writing {CAPTION_BATCH} bundles (LLM residency)")
-                bundles = refill_bundles(cards, per, p["weights"])
+                bundles = refill_bundles(cards, per, per_n, count,
+                                         p["weights"])
         vein, caption, lyrics, bpm, target_s = bundles.pop(0)
         card = cards[vein]
         if TEST_SHORT:
             target_s = 45
         seed = random.randrange(2 ** 31)
+        lyr_mode = ("words" if vein in lyric_veins(cards)
+                    else "tags" if lyrics else "none")
         log(f"generating: vein={card['name']} bpm={bpm} "
-            f"len<={target_s}s seed={seed} lyrics={'yes' if lyrics else 'no'}")
+            f"len<={target_s}s seed={seed} lyrics={lyr_mode}")
 
         # final gate right before taking the card
         if hold_reason():

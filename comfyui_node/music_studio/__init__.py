@@ -61,7 +61,8 @@ def _p():
 
 
 def _read_state(p):
-    """Fold the station's event log into: track records, available tracks."""
+    """Fold the station's event log into: track records, available tracks,
+    and the consumed-id set (the played ledger)."""
     recs, consumed = {}, set()
     if os.path.exists(p["meta"]):
         with open(p["meta"]) as f:
@@ -79,7 +80,7 @@ def _read_state(p):
     avail = [m for rid, m in recs.items()
              if rid not in consumed and not m.get("consumed")
              and os.path.exists(os.path.join(p["tank"], m["file"]))]
-    return recs, avail
+    return recs, avail, consumed
 
 
 def _cards(p):
@@ -114,7 +115,7 @@ async def next_track(request):
         return web.json_response({"empty": True,
                                   "hint": "station not captured yet"})
     mult = _weights(p)
-    recs, avail = _read_state(p)
+    recs, avail, _ = _read_state(p)
     if not avail:
         # a listener is waiting on an empty spool: tell the daemon (it will
         # cut an emergency take), and NEVER sit silent — replay the archive
@@ -206,7 +207,7 @@ async def feedback(request):
     if action not in FEEDBACK_MULT or not tid:
         return web.json_response({"error": "bad request"}, status=400)
     p = _p()
-    recs, _ = _read_state(p)
+    recs, _, _ = _read_state(p)
     track = recs.get(tid)
     if not track:
         return web.json_response({"error": "unknown id"}, status=404)
@@ -278,15 +279,22 @@ async def status(request):
         cards = _cards(p)
     except FileNotFoundError:
         cards = {}
-    _, avail = _read_state(p)
+    recs, avail, consumed = _read_state(p)
     per = {}
     for m in avail:
         v = per.setdefault(m["vein"], {"tracks": 0, "seconds": 0.0})
         v["tracks"] += 1
         v["seconds"] += m["duration_s"]
+    played_n, played_s = 0, 0.0
+    for rid in consumed:
+        m = recs.get(rid)
+        if m:
+            played_n += 1
+            played_s += m.get("duration_s", 0.0)
     keepers = len(os.listdir(p["keepers"])) if os.path.isdir(p["keepers"]) else 0
     return web.json_response({
         "station": stations.active(),
+        "played": {"tracks": played_n, "minutes": round(played_s / 60, 1)},
         "veins": {v: {"name": c.get("name", f"Vein {v}"),
                       "tracks": per.get(v, {}).get("tracks", 0),
                       "minutes": round(per.get(v, {}).get("seconds", 0) / 60, 1),
