@@ -49,6 +49,7 @@ SIBLINGS = list(_cfg["sibling_hosts"])
 LLM_URL = (_cfg["llm_base"] or "").rstrip("/") or None
 LLM_MODEL = _cfg["llm_model"]
 CAPTION_BATCH = int(_cfg["caption_batch"])
+MIN_TAKE_S = int(_cfg.get("min_take_s", 45))
 
 STEPS = int(_cfg["steps"])
 CFG = 1.7
@@ -621,11 +622,14 @@ def main():
             continue
 
         dur = duration_of(path)
-        if dur < 0.5 * target_s:
+        # Absolute stub floor, NOT target-coupled: natural takes run shorter
+        # than aspirational targets however rich the caption; a target-coupled
+        # floor rejects the whole distribution and starves the radio.
+        if dur < MIN_TAKE_S:
             os.unlink(path)
             cool_vein(vein)
-            log(f"REJECT-short {card['name']} {dur:.0f}s "
-                f"(target ~{target_s}s) — vein cools {COOLDOWN_S}s")
+            log(f"REJECT-stub {card['name']} {dur:.0f}s "
+                f"(< {MIN_TAKE_S}s) — vein cools {COOLDOWN_S}s")
             if ONESHOT:
                 return
             continue
