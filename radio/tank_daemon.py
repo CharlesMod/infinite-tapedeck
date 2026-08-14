@@ -50,6 +50,11 @@ LLM_URL = (_cfg["llm_base"] or "").rstrip("/") or None
 LLM_MODEL = _cfg["llm_model"]
 CAPTION_BATCH = int(_cfg["caption_batch"])
 MIN_TAKE_S = int(_cfg.get("min_take_s", 45))
+# Adaptive bar: every critic reject eases that vein's bar a little so dead
+# air self-limits; the next accept snaps it back to the calibrated level.
+RELIEF_STEP = float(_cfg.get("relief_step", 0.008))
+RELIEF_MAX = float(_cfg.get("relief_max", 0.05))
+_relief = {}                  # vein -> current threshold relief
 
 STEPS = int(_cfg["steps"])
 CFG = 1.7
@@ -636,7 +641,8 @@ def main():
 
         v = clap_embed(path)
         score = float(v @ critic[vein]["centroid"])
-        thr = critic[vein]["threshold"]
+        thr_base = critic[vein]["threshold"]
+        thr = thr_base - _relief.get(vein, 0.0)
         if score >= thr:
             track_id = f"{int(time.time())}_{seed}"
             dest = os.path.join(p["tank"], f"v{vein}__{track_id}.mp3")
@@ -646,17 +652,23 @@ def main():
                     "id": track_id, "vein": vein, "vein_name": card["name"],
                     "file": os.path.basename(dest), "duration_s": dur,
                     "score": round(score, 3), "threshold": round(thr, 3),
+                    "relief": round(_relief.get(vein, 0.0), 3),
                     "bpm": bpm, "seed": seed, "steps": STEPS,
                     "caption": caption, "lyrics": lyrics,
                     "created": int(time.time()), "consumed": False,
                 }) + "\n")
+            eased = _relief.pop(vein, 0.0)
             log(f"ACCEPT {card['name']} {dur:.0f}s score {score:.3f} "
-                f"(thr {thr:.3f}) -> {os.path.basename(dest)}")
+                f"(thr {thr:.3f}) -> {os.path.basename(dest)}"
+                + (f" — bar restored to {thr_base:.3f}" if eased else ""))
         else:
             os.unlink(path)
             cool_vein(vein)
+            _relief[vein] = min(RELIEF_MAX,
+                                _relief.get(vein, 0.0) + RELIEF_STEP)
             log(f"REJECT {card['name']} {dur:.0f}s score {score:.3f} "
-                f"< thr {thr:.3f} — vein cools {COOLDOWN_S}s")
+                f"< thr {thr:.3f} — bar eases to "
+                f"{thr_base - _relief[vein]:.3f}, vein cools {COOLDOWN_S}s")
         if ONESHOT:
             return
 
