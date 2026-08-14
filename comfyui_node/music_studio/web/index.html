@@ -888,6 +888,9 @@ async function pollGpu() {
     if (s.error) return;
     $("sys-gpu").style.width = s.util + "%";
     $("sys-gpu-n").textContent = s.util + "%";
+    const pct = s.vram_used_mb / s.vram_total_mb * 100;
+    $("sys-vram").style.width = pct + "%";
+    $("sys-vram-n").textContent = (s.vram_used_mb / 1024).toFixed(1) + "G";
   } catch (e) { /* server restarting */ }
   try {
     const d = await (await fetch("/music_studio/deckstate")).json();
@@ -910,9 +913,6 @@ async function pollGpu() {
     if ($("title").textContent.startsWith("SYNTHESIZING"))
       $("stats").textContent =
         ((OWNER[d.owner] || "") + " — " + (d.msg || "") + age).toUpperCase();
-    const pct = s.vram_used_mb / s.vram_total_mb * 100;
-    $("sys-vram").style.width = pct + "%";
-    $("sys-vram-n").textContent = (s.vram_used_mb / 1024).toFixed(1) + "G";
   } catch (e) { /* server restarting */ }
 }
 

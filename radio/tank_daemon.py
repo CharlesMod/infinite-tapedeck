@@ -19,6 +19,7 @@ import json
 import os
 import random
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -195,7 +196,20 @@ def foreign_vram_mb():
 
 def hold_reason():
     if os.path.exists(PAUSE_FLAG):
-        return "PAUSE file present"
+        # Failure class: a captioner killed hard (OOM, SIGKILL) leaves its
+        # pid-bearing PAUSE behind and the radio would hold forever. A dead
+        # pid is debris — clear it and keep playing. Unparseable = Dean's
+        # manual touch = sacred.
+        try:
+            pid = int(open(PAUSE_FLAG).read().strip())
+            try:
+                os.kill(pid, 0)
+                return "PAUSE held by captioner"
+            except OSError:
+                os.unlink(PAUSE_FLAG)
+                log("stale PAUSE from dead captioner — cleared, resuming")
+        except (ValueError, OSError):
+            return "PAUSE file present (manual hold)"
     for sib in SIBLINGS:
         if queue_busy(sib):
             return f"sibling busy: {sib}"
@@ -258,12 +272,15 @@ def llm_chat(prompt, temperature=0.9, max_tokens=900):
 
 
 def free_music3():
-    """Hand the card over: drop the generator's weights and wait for VRAM."""
+    """Hand the card over: drop the generator's weights and wait for VRAM.
+    VERIFIED — loading the LLM onto an unfreed card is how llama-server
+    children wedge into 0-tok/s zombies."""
     try:
         http_json(M3 + "/free", {"unload_models": True, "free_memory": True},
                   timeout=15)
     except Exception:
-        return
+        log("free_music3: /free unreachable — card NOT freed")
+        return False
     for _ in range(15):
         try:
             used = int(subprocess.run(
@@ -271,10 +288,12 @@ def free_music3():
                  "--format=csv,noheader,nounits"],
                 capture_output=True, text=True, timeout=5).stdout.strip())
             if used < 5000:
-                return
+                return True
         except Exception:
-            return
+            break
         time.sleep(2)
+    log("free_music3: card did NOT free — skipping LLM this residency")
+    return False
 
 
 def llm_resident_mb():
@@ -525,23 +544,30 @@ def refill_bundles(cards, per, per_n, count, weights_path, p):
         sim_n[v] = sim_n.get(v, 0) + 2
         n += 2
         picks.append(v)
-    free_music3()
-    while _needs_rewrite:
-        v = _needs_rewrite.pop()
-        if v in cards:
-            rewrite_card(v, cards[v], p["analysis"],
-                         os.path.join(p["analysis"], "essence_cards.json"))
+    freed = free_music3()
+    if freed:
+        while _needs_rewrite:
+            v = _needs_rewrite.pop()
+            if v in cards:
+                rewrite_card(v, cards[v], p["analysis"],
+                             os.path.join(p["analysis"], "essence_cards.json"))
     out = []
     for v in picks:
         card = cards[v]
-        caption, bpm, target_s = sample_caption(v, card)
-        lyr = (sample_lyrics(card) if v in lv
-               else structural_tags(target_s))
+        if freed:
+            caption, bpm, target_s = sample_caption(v, card)
+        else:
+            # unfreed card: never wake the LLM into a VRAM squeeze —
+            # seed captions keep the radio fed until the card clears
+            caption, bpm, target_s = fallback_caption(v, card)
+        lyr = ((sample_lyrics(card) if freed else "")
+               if v in lv else structural_tags(target_s))
         # uses=2: one caption composes two different songs (the encoder seed
         # is the composer), halving residency demand at zero quality cost
         out.append({"vein": v, "caption": caption, "lyrics": lyr,
                     "bpm": bpm, "target_s": target_s, "uses": 2})
-    unload_llm()
+    if freed:
+        unload_llm()
     return out
 
 
@@ -893,6 +919,7 @@ def main():
     cache = {}
     last_slug = None
     bundles, other_bundles = [], []
+    consec_timeouts = 0
 
     while not _stop:
         slug = stations.active()
@@ -909,6 +936,13 @@ def main():
             bundles, other_bundles = load_bundle_queue(slug)
             if bundles:
                 log(f"{len(bundles)} pre-written bundles on disk")
+
+        # Failure class: a full disk turns every accept into a crash loop.
+        # Hold generation loudly; serving the existing spool needs no space.
+        if shutil.disk_usage(BASE).free < 2 * 2 ** 30:
+            log("DISK nearly full (<2 GiB) — holding generation")
+            time.sleep(300)
+            continue
 
         janitor(p["meta"], p["tank"], p["keepers"])
         total, per, count, per_n = tank_seconds(p["meta"])
@@ -1017,57 +1051,82 @@ def main():
         # length is driven by the caption's stated duration and arc instead
         path, status = generate(caption, lyrics, seed, 300, steps_now)
         if not path:
+            # Failure class: a hung ComfyUI holds queue_running forever and
+            # every cycle burns a 20-minute timeout — slow-motion freeze.
+            # Two consecutive timeouts = bounce the music server.
+            if status == "timeout":
+                consec_timeouts += 1
+                if consec_timeouts >= 2:
+                    log("two consecutive generation timeouts — "
+                        "bouncing comfyui-music3 to self-heal")
+                    subprocess.run(["systemctl", "--user", "restart",
+                                    "comfyui-music3.service"], timeout=60)
+                    consec_timeouts = 0
+                    time.sleep(45)
+                    continue
             log(f"generation {status}; backoff {BACKOFF}s")
             time.sleep(BACKOFF)
             continue
+        consec_timeouts = 0
 
-        dur = duration_of(path)
-        # Absolute stub floor, NOT target-coupled: the model's natural takes
-        # run ~60-135s however rich the caption; a floor pinned to the
-        # aspirational target rejects the whole distribution and starves the
-        # radio. Targets still pull length upward via the caption text.
-        if dur < MIN_TAKE_S:
-            os.unlink(path)
-            cool_vein(vein)
-            record_verdict(vein, False, dur=dur)
-            log(f"REJECT-stub {card['name']} {dur:.0f}s "
-                f"(< {MIN_TAKE_S}s) — vein cools {COOLDOWN_S}s")
-            if ONESHOT:
-                return
-            continue
+        try:
+            dur = duration_of(path)
+            # Absolute stub floor, NOT target-coupled: the model's natural takes
+            # run ~60-135s however rich the caption; a floor pinned to the
+            # aspirational target rejects the whole distribution and starves the
+            # radio. Targets still pull length upward via the caption text.
+            if dur < MIN_TAKE_S:
+                os.unlink(path)
+                cool_vein(vein)
+                record_verdict(vein, False, dur=dur)
+                log(f"REJECT-stub {card['name']} {dur:.0f}s "
+                    f"(< {MIN_TAKE_S}s) — vein cools {COOLDOWN_S}s")
+                if ONESHOT:
+                    return
+                continue
 
-        v = clap_embed(path)
-        score = float(v @ critic[vein]["centroid"])
-        thr_base = critic[vein]["threshold"]
-        thr = thr_base - _relief.get(vein, 0.0)
-        if score >= thr:
-            track_id = f"{int(time.time())}_{seed}"
-            dest = os.path.join(p["tank"], f"v{vein}__{track_id}.mp3")
-            os.replace(path, dest)
-            with open(p["meta"], "a") as f:
-                f.write(json.dumps({
-                    "id": track_id, "vein": vein, "vein_name": card["name"],
-                    "file": os.path.basename(dest), "duration_s": dur,
-                    "score": round(score, 3), "threshold": round(thr, 3),
-                    "relief": round(_relief.get(vein, 0.0), 3),
-                    "bpm": bpm, "seed": seed, "steps": steps_now,
-                    "caption": caption, "lyrics": lyrics,
-                    "created": int(time.time()), "consumed": False,
-                }) + "\n")
-            record_verdict(vein, True, dur=dur, score=score, thr=thr)
-            eased = _relief.pop(vein, 0.0)
-            log(f"ACCEPT {card['name']} {dur:.0f}s score {score:.3f} "
-                f"(thr {thr:.3f}) -> {os.path.basename(dest)}"
-                + (f" — bar restored to {thr_base:.3f}" if eased else ""))
-        else:
-            os.unlink(path)
+            v = clap_embed(path)
+            score = float(v @ critic[vein]["centroid"])
+            thr_base = critic[vein]["threshold"]
+            thr = thr_base - _relief.get(vein, 0.0)
+            if score >= thr:
+                track_id = f"{int(time.time())}_{seed}"
+                dest = os.path.join(p["tank"], f"v{vein}__{track_id}.mp3")
+                os.replace(path, dest)
+                with open(p["meta"], "a") as f:
+                    f.write(json.dumps({
+                        "id": track_id, "vein": vein, "vein_name": card["name"],
+                        "file": os.path.basename(dest), "duration_s": dur,
+                        "score": round(score, 3), "threshold": round(thr, 3),
+                        "relief": round(_relief.get(vein, 0.0), 3),
+                        "bpm": bpm, "seed": seed, "steps": steps_now,
+                        "caption": caption, "lyrics": lyrics,
+                        "created": int(time.time()), "consumed": False,
+                    }) + "\n")
+                record_verdict(vein, True, dur=dur, score=score, thr=thr)
+                eased = _relief.pop(vein, 0.0)
+                log(f"ACCEPT {card['name']} {dur:.0f}s score {score:.3f} "
+                    f"(thr {thr:.3f}) -> {os.path.basename(dest)}"
+                    + (f" — bar restored to {thr_base:.3f}" if eased else ""))
+            else:
+                os.unlink(path)
+                cool_vein(vein)
+                record_verdict(vein, False, dur=dur, score=score, thr=thr)
+                _relief[vein] = min(RELIEF_MAX,
+                                    _relief.get(vein, 0.0) + RELIEF_STEP)
+                log(f"REJECT {card['name']} {dur:.0f}s score {score:.3f} "
+                    f"< thr {thr:.3f} — bar eases to "
+                    f"{thr_base - _relief[vein]:.3f}, vein cools {COOLDOWN_S}s")
+        except Exception as e:
+            # Failure class: one corrupt output (undecodable mp3, CLAP
+            # choke) must cost one take, never the daemon.
+            log(f"verdict failed ({e!r:.90}) — discarding take, cooling vein")
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
             cool_vein(vein)
-            record_verdict(vein, False, dur=dur, score=score, thr=thr)
-            _relief[vein] = min(RELIEF_MAX,
-                                _relief.get(vein, 0.0) + RELIEF_STEP)
-            log(f"REJECT {card['name']} {dur:.0f}s score {score:.3f} "
-                f"< thr {thr:.3f} — bar eases to "
-                f"{thr_base - _relief[vein]:.3f}, vein cools {COOLDOWN_S}s")
+            record_verdict(vein, False, dur=0)
         if ONESHOT:
             return
 
