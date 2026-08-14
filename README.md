@@ -30,10 +30,10 @@ cassette deck from a cyberpunk 1994.
 - **A critic with your ears** — every generated take is CLAP-scored against
   your corpus before you hear it; off-taste takes are rejected automatically,
   with thresholds self-calibrated per vein from your own music.
-- **The tank** — generation is slower than realtime, so a background daemon
-  pre-fills a buffer of approved takes whenever your GPU is idle, and yields
-  instantly when you need the card (games, other AI workloads, a sibling
-  ComfyUI instance).
+- **The spool** — generation is slower than realtime, so a background daemon
+  keeps a reserve of approved takes wound ahead whenever your GPU is idle, and
+  yields instantly when you need the card (games, other AI workloads, a
+  sibling ComfyUI instance).
 - **Feedback that steers** — keep / skip / dislike buttons re-weight what
   gets generated next. The radio converges on you.
 - **90s cassette deck UI** — spinning reels, VU meters driven by the actual
@@ -91,7 +91,7 @@ echo "$PWD" > comfyui_node/music_studio/tapedeck_base.txt
 # 3. put music in ./library (or point a station anywhere later)
 # 4. capture it
 python analysis/import_pipeline.py --station full-library
-# 5. run the tank daemon + open the deck
+# 5. run the spool daemon + open the deck
 python radio/tank_daemon.py &
 # http://<host>:8188/extensions/music_studio/index.html — press PLAY
 ```
