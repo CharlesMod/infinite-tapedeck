@@ -1,3 +1,4 @@
+<img width="1333" height="1045" alt="image-1786745043593" src="https://github.com/user-attachments/assets/bb15f061-fc59-495e-b50b-9ecc93b2e510" />
 # ∞ TAPEDECK — Infinite Personal AI Radio, Fully Local
 
 **Turn a folder of songs into a radio station that never ends.** TAPEDECK is a
