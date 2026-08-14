@@ -174,8 +174,20 @@ def foreign_vram_mb():
     for line in out.strip().splitlines():
         try:
             pid_s, mem_s = line.split(",")
-            if int(pid_s) not in ours:
-                total += int(mem_s)
+            pid = int(pid_s)
+            if pid in ours:
+                continue
+            # house tenants coordinate through their own choreography
+            # (residencies, PAUSE) — only genuinely foreign load (a game)
+            # should hold the radio
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                    cmd = f.read().decode(errors="replace")
+                if "llama-server" in cmd or "caption_pass" in cmd:
+                    continue
+            except OSError:
+                pass
+            total += int(mem_s)
         except ValueError:
             continue
     return total
