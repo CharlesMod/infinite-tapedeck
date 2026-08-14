@@ -117,7 +117,8 @@ async def next_track(request):
     _, avail = _read_state(p)
     if not avail:
         return web.json_response({"empty": True,
-                                  "hint": "tank is filling — try again soon"})
+                                  "hint": "fresh tape is being synthesized "
+                                          "— give the deck a few minutes"})
 
     by_vein = {}
     for m in avail:
@@ -266,6 +267,23 @@ async def status(request):
 
 
 # ------------------------------------------------------------------ stations
+
+@PromptServer.instance.routes.get("/music_studio/gpu")
+async def gpu(request):
+    """Whole-card utilization and VRAM for the deck's meter bridge — any
+    tenant counts (generation, captioner, games), which is the point:
+    the user should always be able to see that the machine is working."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5).stdout.strip()
+        util, used, total = [int(x) for x in out.split(",")]
+        return web.json_response({"util": util, "vram_used_mb": used,
+                                  "vram_total_mb": total})
+    except Exception as e:
+        return web.json_response({"error": repr(e)[:80]}, status=503)
+
 
 @PromptServer.instance.routes.get("/music_studio/stations")
 async def stations_list(request):

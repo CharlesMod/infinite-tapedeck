@@ -322,6 +322,18 @@
         <div id="sl-count"></div>
       </div>
 
+      <div class="rail-sec">
+        <div class="rail-h">System</div>
+        <div class="g-row"><span class="g-name">GPU</span>
+          <div class="g-bar"><div class="g-fill" id="sys-gpu"
+            style="background:var(--amber)"></div></div>
+          <span class="g-min" id="sys-gpu-n">—</span></div>
+        <div class="g-row"><span class="g-name">VRAM</span>
+          <div class="g-bar"><div class="g-fill" id="sys-vram"
+            style="background:linear-gradient(90deg,var(--pink),var(--red))"></div></div>
+          <span class="g-min" id="sys-vram-n">—</span></div>
+      </div>
+
       <div class="rail-sec" style="margin-bottom:0">
         <div class="rail-h">Dubbing</div>
         <div id="cap-state">no capture running</div>
@@ -397,7 +409,7 @@ async function next() {
   const r = await fetch("/music_studio/next");
   const t = await r.json();
   if (t.empty) {
-    $("title").textContent = "WINDING FRESH TAPE…";
+    $("title").textContent = "SYNTHESIZING TAPE…";
     $("stats").textContent = (t.hint || "give it a few minutes").toUpperCase();
     setTimeout(next, 45000);
     return;
@@ -760,6 +772,20 @@ document.addEventListener("drop", async (e) => {
   scan(true);
 });
 
+/* --------------------------------------------------------- system meters */
+
+async function pollGpu() {
+  try {
+    const s = await (await fetch("/music_studio/gpu")).json();
+    if (s.error) return;
+    $("sys-gpu").style.width = s.util + "%";
+    $("sys-gpu-n").textContent = s.util + "%";
+    const pct = s.vram_used_mb / s.vram_total_mb * 100;
+    $("sys-vram").style.width = pct + "%";
+    $("sys-vram-n").textContent = (s.vram_used_mb / 1024).toFixed(1) + "G";
+  } catch (e) { /* server restarting */ }
+}
+
 /* --------------------------------------------------------------- init */
 
 seedHistory();
@@ -767,8 +793,10 @@ loadStations();
 loadSetlist();
 refreshGauge();
 pollCapture();
+pollGpu();
 setInterval(refreshGauge, 30000);
 setInterval(pollCapture, 3000);
+setInterval(pollGpu, 2500);
 </script>
 </body>
 </html>
