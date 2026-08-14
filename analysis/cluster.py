@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Cluster the corpus into taste veins from CLAP embeddings, then attach
+deterministic-feature stats per vein. Density-based first (HDBSCAN) so the
+data decides how many veins exist; k-means silhouette sweep as fallback if
+density finds nothing. Noise points stay labeled — one-off tracks are
+information, not failures — but get a nearest-vein pointer.
+
+Output: analysis/veins.json + analysis/veins_report.md (skeleton for the
+essence cards; prose distillation happens on top of this).
+
+Usage: venv/bin/python analysis/cluster.py
+"""
+import json
+import os
+import sys
+from collections import Counter
+
+import numpy as np
+
+import os as _os
+BASE = _os.environ.get("TAPEDECK_BASE") or _os.path.dirname(
+    _os.path.dirname(_os.path.abspath(__file__)))
+
+
+LIB = sys.argv[1] if len(sys.argv) > 1 else f"{BASE}/library"
+A = sys.argv[2] if len(sys.argv) > 2 else f"{BASE}/analysis"
+
+# Below this corpus size, clustering is noise: the folder IS the mood.
+SINGLE_VEIN_BELOW = 24
+
+
+def load():
+    emb = np.load(os.path.join(A, "embeddings.npy"))
+    with open(os.path.join(A, "embeddings_keys.json")) as f:
+        keys = json.load(f)
+    feats = {}
+    with open(os.path.join(A, "features.jsonl")) as f:
+        for line in f:
+            rec = json.loads(line)
+            feats[rec["path"]] = rec
+    return emb, keys, feats
+
+
+def has_lyrics(rel):
+    stem = os.path.splitext(os.path.join(LIB, rel))[0]
+    return os.path.exists(stem + ".lrc")
+
+
+def cluster(emb):
+    if emb.shape[0] < SINGLE_VEIN_BELOW:
+        return (np.zeros(emb.shape[0], dtype=int),
+                f"single-vein ({emb.shape[0]} tracks — the folder is the mood)")
+
+    from sklearn.cluster import HDBSCAN, KMeans
+    from sklearn.metrics import silhouette_score
+
+    h = HDBSCAN(min_cluster_size=10, min_samples=5, metric="euclidean")
+    labels = h.fit_predict(emb)
+    n = len(set(labels)) - (1 if -1 in labels else 0)
+    noise = int((labels == -1).sum())
+    # density failure: everything is one blob or everything is noise
+    if n >= 3 and noise < len(labels) * 0.5:
+        return labels, f"hdbscan(min_cluster_size=10): {n} veins, {noise} noise"
+
+    best = (-1.0, None, None)
+    for k in range(4, 13):
+        km = KMeans(n_clusters=k, n_init=10, random_state=0).fit(emb)
+        s = silhouette_score(emb, km.labels_)
+        if s > best[0]:
+            best = (s, km.labels_, k)
+    return best[1], f"kmeans(k={best[2]}, silhouette={best[0]:.3f}) [hdbscan fallback]"
+
+
+def vein_stats(idx, keys, feats, emb, labels, label):
+    members = [i for i in idx if labels[i] == label]
+    vecs = emb[members]
+    centroid = vecs.mean(axis=0)
+    centroid /= np.linalg.norm(centroid) + 1e-9
+    sims = vecs @ centroid
+    order = np.argsort(-sims)
+    ranked = [keys[members[i]] for i in order]
+
+    fs = [feats[k] for k in ranked if k in feats]
+    bpm = [f["tempo_bpm"] for f in fs]
+    cent = [f["centroid_hz"] for f in fs]
+    on = [f["onset_per_s"] for f in fs]
+    dur = [f["duration_s"] for f in fs]
+    keys_c = Counter(f["key"] for f in fs).most_common(4)
+    thirds = np.array([f["energy_thirds"] for f in fs])
+    artists = Counter(k.split(os.sep)[0] for k in ranked).most_common(6)
+    lrc = sum(1 for k in ranked if has_lyrics(k))
+
+    return {
+        "size": len(members),
+        "vocal_share": round(lrc / len(ranked), 2) if ranked else 0,
+        "bpm": {"median": float(np.median(bpm)), "iqr": [float(np.percentile(bpm, 25)),
+                                                         float(np.percentile(bpm, 75))]},
+        "duration_median_s": float(np.median(dur)),
+        "centroid_hz_median": float(np.median(cent)),
+        "onset_per_s_median": float(np.median(on)),
+        "energy_arc": [round(float(x), 4) for x in thirds.mean(axis=0)],
+        "top_keys": keys_c,
+        "top_artists": artists,
+        "central_tracks": ranked[:10],
+        "all_tracks": ranked,
+        "centroid": [round(float(x), 5) for x in centroid],
+    }
+
+
+def main():
+    emb, keys, feats = load()
+    assert emb.shape[0] == len(keys), "embeddings/keys misaligned"
+    # tracks Dean voted off the station: analyzed, but not part of its essence
+    ex_path = os.path.join(A, "excluded.json")
+    if os.path.exists(ex_path):
+        with open(ex_path) as f:
+            excluded = set(json.load(f))
+        mask = [i for i, k in enumerate(keys) if k not in excluded]
+        if len(mask) != len(keys):
+            print(f"excluding {len(keys) - len(mask)} track(s) from the essence")
+            emb = emb[mask]
+            keys = [keys[i] for i in mask]
+    labels, method = cluster(emb)
+    print("method:", method)
+
+    idx = list(range(len(keys)))
+    out = {"method": method, "veins": {}, "noise": []}
+    for label in sorted(set(labels)):
+        if label == -1:
+            continue
+        out["veins"][str(label)] = vein_stats(idx, keys, feats, emb, labels, label)
+
+    # noise: nearest vein by centroid for context
+    cents = {l: np.array(v["centroid"]) for l, v in out["veins"].items()}
+    for i in idx:
+        if labels[i] == -1:
+            sims = {l: float(emb[i] @ c) for l, c in cents.items()}
+            near = max(sims, key=sims.get)
+            out["noise"].append({"path": keys[i], "nearest_vein": near,
+                                 "sim": round(sims[near], 3)})
+
+    with open(os.path.join(A, "veins.json"), "w") as f:
+        json.dump(out, f, indent=1)
+
+    lines = [f"# Taste veins — {method}", ""]
+    for l, v in sorted(out["veins"].items(), key=lambda kv: -kv[1]["size"]):
+        lines += [f"## Vein {l} — {v['size']} tracks "
+                  f"({int(v['vocal_share']*100)}% with lyrics)",
+                  f"- BPM median {v['bpm']['median']:.0f} "
+                  f"(IQR {v['bpm']['iqr'][0]:.0f}–{v['bpm']['iqr'][1]:.0f}) | "
+                  f"onsets/s {v['onset_per_s_median']:.1f} | "
+                  f"spectral centroid {v['centroid_hz_median']:.0f} Hz | "
+                  f"median length {v['duration_median_s']/60:.1f} min",
+                  f"- energy arc (thirds): {v['energy_arc']}",
+                  f"- keys: {', '.join(f'{k} ×{c}' for k, c in v['top_keys'])}",
+                  f"- artists: {', '.join(f'{a} ×{c}' for a, c in v['top_artists'])}",
+                  "- most central:"]
+        lines += [f"  - {t}" for t in v["central_tracks"]]
+        lines += [""]
+    if out["noise"]:
+        lines += [f"## Unclustered ({len(out['noise'])} one-offs)", ""]
+        lines += [f"- {n['path']} → nearest vein {n['nearest_vein']} ({n['sim']})"
+                  for n in out["noise"][:20]]
+    with open(os.path.join(A, "veins_report.md"), "w") as f:
+        f.write("\n".join(lines))
+    print(f"{len(out['veins'])} veins, {len(out['noise'])} unclustered "
+          f"-> veins.json, veins_report.md")
+
+
+if __name__ == "__main__":
+    main()

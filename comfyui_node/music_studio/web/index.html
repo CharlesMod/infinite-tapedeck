@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>∞ TAPEDECK · Music3</title>
+<style>
+  :root {
+    --bg: #07040e; --chassis: #130f1e; --chassis2: #1b1530;
+    --pink: #ff2d95; --cyan: #00e5ff; --vfd: #39ffa0; --amber: #ffb347;
+    --red: #ff3b4e; --text: #d8d4ea; --dim: #6f6a8a;
+    --v0: #ffb347; --v1: #00e5ff; --v2: #b366ff; --v3: #ff2d95;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background:
+      radial-gradient(1100px 700px at 20% -10%, #1c0f33, transparent),
+      radial-gradient(900px 600px at 95% 0%, #0a1f2e, transparent),
+      var(--bg);
+    color: var(--text);
+    font: 15px/1.5 ui-monospace, "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    min-height: 100vh; padding: 1.6rem 1rem 3rem;
+  }
+  /* CRT scanlines over everything, faint */
+  body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 90;
+    background: repeating-linear-gradient(0deg,
+      transparent 0 2px, #00000030 2px 3px);
+    mix-blend-mode: multiply;
+  }
+  h1 {
+    text-align: center; font-size: 1.25rem; font-weight: 700;
+    letter-spacing: .55em; text-transform: uppercase; margin-bottom: 1.6rem;
+    color: var(--cyan);
+    text-shadow: 0 0 8px var(--cyan), 0 0 28px #00e5ff70;
+  }
+  h1 .inf { color: var(--pink); text-shadow: 0 0 10px var(--pink), 0 0 30px #ff2d9580; }
+  #layout { display: grid; grid-template-columns: minmax(0,600px) minmax(0,380px);
+            gap: 1.3rem; justify-content: center; align-items: start; }
+  @media (max-width: 1020px) { #layout { grid-template-columns: minmax(0,600px); } }
+
+  .panel {
+    background: linear-gradient(178deg, var(--chassis2), var(--chassis) 40%);
+    border: 1px solid #2c2347;
+    border-top-color: #453a6b;
+    border-radius: 14px; padding: 1.3rem;
+    box-shadow: 0 24px 70px #000c, inset 0 1px 0 #ffffff12;
+    position: relative;
+  }
+  .plate {
+    position: absolute; top: .55rem; right: .9rem; font-size: .6rem;
+    letter-spacing: .3em; color: var(--dim); text-transform: uppercase;
+  }
+
+  /* ---------------- cassette window ---------------- */
+  #cassette {
+    background: linear-gradient(180deg, #0d0a17, #090612);
+    border: 1px solid #322a52; border-radius: 10px;
+    padding: .9rem 1rem .7rem; margin-bottom: .9rem;
+    box-shadow: inset 0 0 24px #000, inset 0 0 60px #12093080;
+  }
+  #tape-label {
+    display: flex; justify-content: space-between; align-items: center;
+    background: repeating-linear-gradient(90deg,
+      #ffffff09 0 2px, transparent 2px 4px),
+      linear-gradient(90deg, #241c3d, #1a1430);
+    border: 1px solid var(--accent, #444); border-radius: 6px;
+    padding: .35rem .7rem; margin-bottom: .7rem;
+    box-shadow: 0 0 14px color-mix(in srgb, var(--accent, #444) 40%, transparent);
+  }
+  #vein-name { font-size: .72rem; letter-spacing: .22em; text-transform: uppercase;
+               color: var(--accent, var(--dim));
+               text-shadow: 0 0 6px var(--accent, transparent); }
+  #side { font-size: .62rem; color: var(--dim); letter-spacing: .2em; }
+  #reels { display: flex; align-items: center; justify-content: space-between; }
+  .reel {
+    width: 74px; height: 74px; border-radius: 50%;
+    background:
+      radial-gradient(circle at center, #0a0715 0 17%, transparent 17%),
+      conic-gradient(#3a2f60 0 12deg, #14101f 12deg 60deg, #3a2f60 60deg 72deg,
+        #14101f 72deg 120deg, #3a2f60 120deg 132deg, #14101f 132deg 180deg,
+        #3a2f60 180deg 192deg, #14101f 192deg 240deg, #3a2f60 240deg 252deg,
+        #14101f 252deg 300deg, #3a2f60 300deg 312deg, #14101f 312deg 360deg);
+    border: 3px solid #241c3d; outline: 2px solid #0d0a17;
+    animation: spin 2.4s linear infinite; animation-play-state: paused;
+  }
+  .reel.fast { animation-duration: 1.1s; }
+  body.playing .reel { animation-play-state: running; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #window {
+    flex: 1; margin: 0 1rem; height: 46px; position: relative;
+    background: linear-gradient(180deg, #05030a, #0b0716);
+    border: 1px solid #2c2347; border-radius: 4px; overflow: hidden;
+  }
+  #tape-line { position: absolute; left: 0; right: 0; top: 50%; height: 8px;
+    transform: translateY(-50%);
+    background: linear-gradient(90deg, #52405f, #2b1f38 30%, #2b1f38 70%, #52405f); }
+  #counter {
+    position: absolute; right: .45rem; top: .35rem;
+    font-size: .95rem; letter-spacing: .12em; color: var(--amber);
+    text-shadow: 0 0 7px var(--amber); background: #05030a;
+    padding: 0 .3rem; border: 1px solid #2c234780; border-radius: 3px;
+  }
+
+  /* ---------------- VFD display ---------------- */
+  #vfd {
+    background: linear-gradient(180deg, #020806, #041008);
+    border: 1px solid #1c3a2b; border-radius: 8px;
+    padding: .65rem .9rem; margin-bottom: .9rem;
+    box-shadow: inset 0 0 18px #000e, 0 0 12px #39ffa022;
+    min-height: 4.4em;
+  }
+  #title { font-size: 1.05rem; letter-spacing: .14em; color: var(--vfd);
+           text-shadow: 0 0 9px #39ffa0c0; text-transform: uppercase;
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #stats { font-size: .72rem; color: #23c078; letter-spacing: .1em;
+           margin-top: .25rem; text-shadow: 0 0 6px #23c07880; }
+  #desc { font-size: .7rem; line-height: 1.45; color: #1e9d64; margin-top: .4rem;
+          max-height: 2.9em; overflow: hidden; cursor: pointer; transition: max-height .3s; }
+  #desc.open { max-height: 30em; overflow-y: auto; }
+
+  /* ---------------- VU meters ---------------- */
+  #vu { display: grid; grid-template-columns: 1.1rem 1fr; gap: .3rem .6rem;
+        align-items: center; margin-bottom: 1rem; }
+  .vu-ch { font-size: .62rem; color: var(--dim); letter-spacing: .2em; }
+  .vu-rail { height: 12px; background: #0a0715; border: 1px solid #241c3d;
+             border-radius: 3px; overflow: hidden; position: relative; }
+  .vu-fill { height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--vfd) 0 60%, var(--amber) 60% 82%, var(--red) 82%);
+    -webkit-mask: repeating-linear-gradient(90deg, #000 0 6px, transparent 6px 8px);
+            mask: repeating-linear-gradient(90deg, #000 0 6px, transparent 6px 8px);
+    transition: width .06s linear; }
+
+  /* ---------------- transport ---------------- */
+  audio { width: 100%; margin-bottom: .9rem; accent-color: var(--accent, var(--cyan));
+          filter: hue-rotate(0deg) saturate(1.2); }
+  #buttons { display: grid; grid-template-columns: repeat(4, 1fr); gap: .55rem; }
+  button {
+    background: linear-gradient(180deg, #2b2344, #171126 55%, #100b1d);
+    color: var(--text); border: 1px solid #3a2f60; border-top-color: #574a8a;
+    border-radius: 9px; padding: .8rem .4rem;
+    font: inherit; font-size: .78rem; letter-spacing: .12em;
+    text-transform: uppercase; cursor: pointer;
+    box-shadow: 0 3px 0 #0a0715, inset 0 1px 0 #ffffff14;
+  }
+  button:hover { filter: brightness(1.25); }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 #0a0715; }
+  button:disabled { opacity: .3; cursor: default; }
+  #play {
+    grid-column: 1 / -1; font-size: .95rem; padding: 1rem; font-weight: 700;
+    color: #fff; letter-spacing: .3em;
+    background: linear-gradient(180deg, #ff4fae, #c9187a 60%, #8f0f57);
+    border-color: #ff67bb; text-shadow: 0 0 10px #fff8;
+    box-shadow: 0 4px 0 #57063a, 0 0 26px #ff2d9560, inset 0 1px 0 #ffffff40;
+  }
+  #prev:hover { color: var(--amber); text-shadow: 0 0 8px var(--amber); }
+  #skip:hover { color: var(--cyan); text-shadow: 0 0 8px var(--cyan); }
+  #dislike:hover { color: var(--red); text-shadow: 0 0 8px var(--red); }
+  #keep:hover { color: var(--pink); text-shadow: 0 0 8px var(--pink); }
+  #keep.done { color: var(--vfd); border-color: #2f6a4e;
+               text-shadow: 0 0 8px var(--vfd); }
+
+  /* ---------------- tank gauge ---------------- */
+  #gauge { margin-top: 1.1rem; }
+  .g-row { display: flex; align-items: center; gap: .55rem;
+           font-size: .66rem; color: var(--dim); margin-bottom: .4rem;
+           letter-spacing: .08em; }
+  .g-name { width: 10rem; text-align: right; white-space: nowrap;
+            overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; }
+  .g-bar { flex: 1; height: 8px; background: #0a0715; border: 1px solid #241c3d;
+           border-radius: 3px; overflow: hidden; }
+  .g-fill { height: 100%; transition: width .6s ease;
+    -webkit-mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px);
+            mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px); }
+  .g-min { width: 4.5rem; }
+  #foot { margin-top: 1rem; color: #4c4768; font-size: .62rem; letter-spacing: .06em; }
+  a { color: inherit; }
+
+  /* ---------------- rack (rail) ---------------- */
+  .rail-h { font-size: .66rem; letter-spacing: .3em; text-transform: uppercase;
+            color: var(--cyan); text-shadow: 0 0 8px #00e5ff70; margin-bottom: .6rem; }
+  .rail-sec { margin-bottom: 1.3rem; }
+  select, input[type=text] {
+    width: 100%; background: #0a0715; color: var(--vfd);
+    border: 1px solid #2c2347; border-radius: 7px; padding: .5rem .7rem;
+    font: inherit; font-size: .78rem; text-shadow: 0 0 5px #39ffa070; }
+  select { cursor: pointer; }
+  #new-form { display: none; margin-top: .5rem; }
+  #new-form.open { display: block; }
+  #new-form input { margin-bottom: .45rem; color: var(--text); text-shadow: none; }
+  #new-form .row { display: flex; gap: .5rem; align-items: center;
+                   font-size: .66rem; color: var(--dim); margin-bottom: .5rem; }
+  .small-btn { padding: .45rem .8rem; font-size: .68rem; }
+  #new-station { margin-top: .5rem; }
+  #sl-tools { display: flex; gap: .45rem; align-items: center; margin-bottom: .45rem; }
+  #sl-tools input { flex: 1; }
+  #sl-refresh { padding: .42rem .65rem; }
+  #sl-capture { display: none; padding: .42rem .7rem; font-size: .66rem;
+                color: var(--vfd); border-color: #2f6a4e;
+                text-shadow: 0 0 6px #39ffa080; }
+  #setlist { max-height: 16em; overflow-y: auto; border: 1px solid #1c3a2b;
+             border-radius: 7px; background: linear-gradient(180deg,#020806,#041008);
+             box-shadow: inset 0 0 16px #000d; }
+  .sl-track { padding: .36rem .6rem; font-size: .68rem; color: #23c078;
+              border-bottom: 1px solid #0c1f14; display: flex;
+              justify-content: space-between; gap: .5rem; cursor: pointer;
+              text-shadow: 0 0 4px #23c07850; }
+  .sl-track:last-child { border-bottom: none; }
+  .sl-track.sel { background: #0a2416; }
+  .sl-track.excluded { opacity: .32; }
+  .sl-track.unanalyzed .sl-name::after { content: " ▸NEW"; color: var(--cyan);
+    font-size: .85em; text-shadow: 0 0 5px var(--cyan); }
+  .sl-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sl-meta { color: #14663f; white-space: nowrap; }
+  .rm-btn { background: #2c0a10; border-color: #7a2830; color: #ff8d9d;
+            padding: .1rem .5rem; font-size: .6rem; border-radius: 6px;
+            white-space: nowrap; box-shadow: none; }
+  .rm-btn.restore { background: #0a2416; border-color: #2f6a3e; color: #9de0ae; }
+  #sl-count { font-size: .62rem; color: #14663f; margin-top: .35rem; }
+
+  /* capture = dubbing section */
+  #cap-state { font-size: .68rem; color: var(--dim); margin-bottom: .35rem;
+               letter-spacing: .08em; text-transform: uppercase; }
+  #cap-state.running { color: var(--red); text-shadow: 0 0 7px var(--red); }
+  #cap-state.running::before { content: "● "; animation: blink 1.1s steps(2) infinite; }
+  #cap-state.failed { color: var(--red); }
+  @keyframes blink { 50% { opacity: .15; } }
+  .barwrap { background: #0a0715; border: 1px solid #241c3d; border-radius: 3px;
+             height: 8px; overflow: hidden; margin: .3rem 0 .12rem; }
+  .bar { height: 100%; width: 0; transition: width .5s;
+    background: linear-gradient(90deg, var(--pink), var(--cyan));
+    -webkit-mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px);
+            mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px); }
+  .barlabel { display: flex; justify-content: space-between; font-size: .62rem;
+              color: var(--dim); }
+  .barlabel span:first-child { max-width: 66%; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  #cap-buttons { display: flex; gap: .5rem; margin-top: .5rem; }
+  #cap-pause, #cap-resume { display: none; }
+
+  #drop-overlay { position: fixed; inset: 0; background: #07040ee8;
+    display: none; align-items: center; justify-content: center; z-index: 95;
+    border: 3px dashed var(--cyan); border-radius: 22px; font-size: 1.05rem;
+    color: var(--cyan); letter-spacing: .2em; text-transform: uppercase;
+    text-shadow: 0 0 12px var(--cyan); }
+  #drop-overlay.show { display: flex; }
+  #toast { position: fixed; bottom: 1.1rem; left: 50%; transform: translateX(-50%);
+    background: #041008; border: 1px solid #1c3a2b; color: var(--vfd);
+    text-shadow: 0 0 6px #39ffa080; padding: .55rem 1rem; border-radius: 8px;
+    font-size: .72rem; letter-spacing: .1em; opacity: 0; transition: opacity .3s;
+    pointer-events: none; z-index: 99; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <h1><span class="inf">∞</span>TAPEDECK</h1>
+  <div id="layout">
+
+    <div class="panel" id="card">
+      <span class="plate">MUSIC3 · STEREO CASSETTE DECK · MODEL TD-∞</span>
+      <div id="cassette">
+        <div id="tape-label">
+          <span id="vein-name">insert tape</span>
+          <span id="side">SIDE ∞ · CrO₂ · 32kHz</span>
+        </div>
+        <div id="reels">
+          <div class="reel" id="reel-l"></div>
+          <div id="window"><div id="tape-line"></div><span id="counter">0000</span></div>
+          <div class="reel" id="reel-r"></div>
+        </div>
+      </div>
+
+      <div id="vfd">
+        <div id="title">PRESS PLAY</div>
+        <div id="stats">the deck winds fresh tape while you listen</div>
+        <div id="desc" title="tap to expand"></div>
+      </div>
+
+      <div id="vu">
+        <span class="vu-ch">L</span><div class="vu-rail"><div class="vu-fill" id="vu-l"></div></div>
+        <span class="vu-ch">R</span><div class="vu-rail"><div class="vu-fill" id="vu-r"></div></div>
+      </div>
+
+      <audio id="player" controls preload="auto" crossorigin="anonymous"></audio>
+      <div id="buttons">
+        <button id="play">▶ PLAY</button>
+        <button id="prev" title="back through what already played" disabled>⏮ prev</button>
+        <button id="skip" title="not right now — mild signal">⏭ skip</button>
+        <button id="dislike" title="less of this vein — strong signal">✕ dislike</button>
+        <button id="keep" title="save forever + more of this vein">★ keep</button>
+      </div>
+      <div id="gauge"></div>
+      <div id="foot">skip = "not now" · dislike = "less of this" · keep = saved
+        forever · <a href="import.html">dubbing bay</a></div>
+    </div>
+
+    <div class="panel" id="rail">
+      <span class="plate">RACK UNIT · STATIONS</span>
+      <div class="rail-sec">
+        <div class="rail-h">Station</div>
+        <select id="station-sel"></select>
+        <button class="small-btn" id="new-station">+ new station from folder</button>
+        <div id="new-form">
+          <input type="text" id="ns-name" placeholder="Station name (the mood)">
+          <input type="text" id="ns-path" placeholder="/path/to/folder/of/songs">
+          <div class="row">
+            <input type="checkbox" id="ns-captions">
+            <label for="ns-captions">describe tracks with the listening model (slow)</label>
+          </div>
+          <button class="small-btn" id="ns-create">Create &amp; capture</button>
+        </div>
+      </div>
+
+      <div class="rail-sec">
+        <div class="rail-h">Setlist <span id="sl-src" style="text-transform:none;letter-spacing:0;color:#14663f"></span></div>
+        <div id="sl-tools">
+          <input type="text" id="sl-filter" placeholder="filter…">
+          <button id="sl-refresh" title="rescan the folder for changes">⟳</button>
+          <button id="sl-capture">▶ capture</button>
+        </div>
+        <div id="setlist"></div>
+        <div id="sl-count"></div>
+      </div>
+
+      <div class="rail-sec" style="margin-bottom:0">
+        <div class="rail-h">Dubbing</div>
+        <div id="cap-state">no capture running</div>
+        <div class="barwrap"><div class="bar" id="cap-stagebar"></div></div>
+        <div class="barlabel"><span id="cap-track">—</span><span id="cap-count"></span></div>
+        <div class="barwrap"><div class="bar" id="cap-totalbar"></div></div>
+        <div class="barlabel"><span id="cap-stage"></span><span id="cap-pct"></span></div>
+        <div id="cap-buttons">
+          <button id="cap-pause" class="small-btn">⏸ pause capture</button>
+          <button id="cap-resume" class="small-btn">▶ resume capture</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <div id="drop-overlay">insert tape — drop songs or folders</div>
+  <div id="toast"></div>
+
+<script>
+const VEIN_COLORS = { "0": "var(--v0)", "1": "var(--v1)", "2": "var(--v2)", "3": "var(--v3)" };
+const $ = id => document.getElementById(id);
+let current = null;
+let hist = [];
+let pos = -1;
+let setlist = [];
+
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+/* ------------------------------------------------------------- player */
+
+async function feedback(action) {
+  if (!current) return null;
+  try {
+    const r = await fetch("/music_studio/feedback", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: current.id, action }),
+    });
+    return await r.json();
+  } catch (e) { return null; }
+}
+
+function show(t, replay) {
+  current = t;
+  const accent = VEIN_COLORS[t.vein] || "#888";
+  document.documentElement.style.setProperty("--accent", accent);
+  $("vein-name").textContent = t.vein_name;
+  $("title").textContent = "TAKE " + t.id.split("_")[1].slice(0, 6);
+  $("stats").textContent =
+    `${Math.floor(t.duration_s / 60)}:${String(Math.round(t.duration_s) % 60).padStart(2, "0")}` +
+    ` · ${t.bpm} BPM · FIT ${t.score}` +
+    (t.left_in_tank != null ? ` · ${t.left_in_tank} ON SPOOL` : "") +
+    (replay ? " · REWIND" : "");
+  $("desc").textContent = t.caption;
+  $("desc").classList.remove("open");
+  $("keep").classList.remove("done");
+  $("keep").textContent = "★ keep";
+  const p = $("player");
+  p.src = t.url;
+  p.play().catch(() => {});
+  updateButtons();
+  refreshGauge();
+}
+
+function updateButtons() { $("prev").disabled = hist.length === 0 || pos === 0; }
+
+async function next() {
+  if (pos >= 0 && pos < hist.length - 1) { pos++; show(hist[pos], true); return; }
+  const r = await fetch("/music_studio/next");
+  const t = await r.json();
+  if (t.empty) {
+    $("title").textContent = "WINDING FRESH TAPE…";
+    $("stats").textContent = (t.hint || "give it a few minutes").toUpperCase();
+    setTimeout(next, 45000);
+    return;
+  }
+  hist.push(t);
+  pos = hist.length - 1;
+  show(t, false);
+}
+
+function prev() {
+  const target = pos >= hist.length || pos < 0 ? hist.length - 1 : pos - 1;
+  if (target >= 0) { pos = target; show(hist[target], true); }
+}
+
+async function seedHistory() {
+  try {
+    const r = await fetch("/music_studio/history?limit=50");
+    hist = (await r.json()).history || [];
+  } catch (e) { hist = []; }
+  pos = hist.length;
+  updateButtons();
+}
+
+$("play").onclick = () => { $("play").style.display = "none"; initVU(); next(); };
+$("prev").onclick = prev;
+$("skip").onclick = () => { feedback("skip"); toast("skipped"); next(); };
+$("dislike").onclick = () => { feedback("dislike"); toast("less of that vein"); next(); };
+$("keep").onclick = async () => {
+  const r = await feedback("keep");
+  if (r && r.ok) {
+    $("keep").classList.add("done");
+    $("keep").textContent = "★ kept";
+    toast("saved to keepers — more of this vein");
+  }
+};
+$("desc").onclick = () => $("desc").classList.toggle("open");
+$("player").addEventListener("ended", next);
+
+/* deck instrumentation: reels, counter, VU */
+const player = $("player");
+player.addEventListener("play", () => document.body.classList.add("playing"));
+player.addEventListener("pause", () => document.body.classList.remove("playing"));
+player.addEventListener("timeupdate", () => {
+  const s = player.currentTime || 0;
+  $("counter").textContent =
+    String(Math.floor(s / 60)).padStart(2, "0") +
+    String(Math.floor(s % 60)).padStart(2, "0");
+});
+
+let vu = null;
+function initVU() {
+  if (vu) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const srcNode = ctx.createMediaElementSource(player);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    srcNode.connect(analyser);
+    analyser.connect(ctx.destination);
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    vu = { ctx, analyser, data };
+    (function loop() {
+      requestAnimationFrame(loop);
+      if (player.paused) {
+        $("vu-l").style.width = $("vu-r").style.width = "0%";
+        return;
+      }
+      analyser.getByteFrequencyData(data);
+      const half = data.length >> 1;
+      let lo = 0, hi = 0;
+      for (let i = 0; i < half; i++) lo += data[i];
+      for (let i = half; i < data.length; i++) hi += data[i];
+      $("vu-l").style.width = Math.min(100, (lo / half) / 255 * 130) + "%";
+      $("vu-r").style.width = Math.min(100, (hi / half) / 255 * 180) + "%";
+    })();
+  } catch (e) { /* VU is decoration; audio still plays */ }
+}
+
+async function refreshGauge() {
+  try {
+    const r = await fetch("/music_studio/status");
+    const s = await r.json();
+    const g = $("gauge");
+    g.innerHTML = "";
+    for (const [v, info] of Object.entries(s.veins)) {
+      const row = document.createElement("div");
+      row.className = "g-row";
+      const pct = Math.min(100, info.minutes / 45 * 100);
+      row.innerHTML =
+        `<span class="g-name">${info.name}</span>` +
+        `<div class="g-bar"><div class="g-fill" style="width:${pct}%;` +
+        `background:${VEIN_COLORS[v] || "#888"}"></div></div>` +
+        `<span class="g-min">${info.minutes}min</span>`;
+      g.appendChild(row);
+    }
+  } catch (e) { /* server restarting */ }
+}
+
+/* ------------------------------------------------------------ stations */
+
+async function loadStations() {
+  const r = await fetch("/music_studio/stations");
+  const s = await r.json();
+  const sel = $("station-sel");
+  sel.innerHTML = "";
+  for (const st of s.stations) {
+    const o = document.createElement("option");
+    o.value = st.slug;
+    o.textContent = st.name + (st.ready ? "" : " (capturing…)");
+    if (st.slug === s.active) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
+$("station-sel").onchange = async () => {
+  await fetch("/music_studio/station/select", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug: $("station-sel").value }),
+  });
+  toast("station switched — the deck winds a fresh reel");
+  current = null;
+  await seedHistory();
+  await loadSetlist();
+  refreshGauge();
+  if ($("play").style.display === "none") next();
+};
+
+$("new-station").onclick = () => $("new-form").classList.toggle("open");
+$("ns-create").onclick = async () => {
+  const r = await fetch("/music_studio/station/create", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: $("ns-name").value,
+                           source: $("ns-path").value,
+                           with_captions: $("ns-captions").checked }),
+  });
+  const j = await r.json();
+  if (j.error) { toast(j.error); return; }
+  toast(j.capture === "started"
+        ? "station created — capturing now"
+        : "station created — " + j.capture);
+  $("new-form").classList.remove("open");
+  loadStations();
+};
+
+/* ------------------------------------------------------------- setlist */
+
+let currentSource = "";
+let selectedPath = null;
+
+async function loadSetlist() {
+  try {
+    const r = await fetch("/music_studio/station/tracks");
+    const s = await r.json();
+    setlist = s.tracks || [];
+    currentSource = s.source || "";
+    $("sl-src").textContent = " · " + currentSource;
+    renderSetlist();
+  } catch (e) { /* ignore */ }
+}
+
+async function exclude(path, restore) {
+  const r = await fetch("/music_studio/station/exclude", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, restore }),
+  });
+  const j = await r.json();
+  if (j.ok) {
+    toast(restore ? "restored to the station"
+                  : "removed — capture to re-derive the essence");
+    selectedPath = null;
+    loadSetlist();
+  } else { toast(j.error || "failed"); }
+}
+
+function renderSetlist() {
+  const q = $("sl-filter").value.toLowerCase();
+  const el = $("setlist");
+  el.innerHTML = "";
+  let shown = 0;
+  for (const t of setlist) {
+    if (q && !t.path.toLowerCase().includes(q)) continue;
+    shown++;
+    if (shown > 400) break;
+    const d = document.createElement("div");
+    d.className = "sl-track" + (t.excluded ? " excluded" : "")
+      + (t.analyzed ? "" : " unanalyzed")
+      + (t.path === selectedPath ? " sel" : "");
+    const meta = [t.bpm ? Math.round(t.bpm) + "bpm" : null,
+                  t.key || null].filter(Boolean).join(" · ");
+    d.innerHTML = `<span class="sl-name" title="${t.path}">` +
+                  `${t.path.split("/").pop()}</span>`;
+    if (t.path === selectedPath) {
+      const b = document.createElement("button");
+      b.className = "rm-btn" + (t.excluded ? " restore" : "");
+      b.textContent = t.excluded ? "restore" : "remove from station";
+      b.onclick = (ev) => { ev.stopPropagation(); exclude(t.path, t.excluded); };
+      d.appendChild(b);
+    } else {
+      d.innerHTML += `<span class="sl-meta">${meta}</span>`;
+    }
+    d.onclick = () => {
+      selectedPath = selectedPath === t.path ? null : t.path;
+      renderSetlist();
+    };
+    el.appendChild(d);
+  }
+  $("sl-count").textContent = `${shown} of ${setlist.length} tracks` +
+    (q ? ` matching "${q}"` : "");
+}
+$("sl-filter").oninput = renderSetlist;
+
+/* -------------------------------------------------- rescan + capture */
+
+async function scan(quiet) {
+  try {
+    const r = await fetch("/music_studio/station/scan");
+    const s = await r.json();
+    const parts = [];
+    if (s.new_count) parts.push(`${s.new_count} new`);
+    if (s.removed_count) parts.push(`${s.removed_count} gone`);
+    if (s.excluded_count) parts.push(`${s.excluded_count} excluded`);
+    const btn = $("sl-capture");
+    if (s.new_count || s.removed_count || s.excluded_count) {
+      btn.style.display = "";
+      btn.textContent = `▶ capture (${parts.join(", ")})`;
+    } else {
+      btn.style.display = "none";
+      if (!quiet) toast("setlist is up to date");
+    }
+    return s;
+  } catch (e) { return null; }
+}
+
+$("sl-refresh").onclick = () => { loadSetlist(); scan(false); };
+$("sl-capture").onclick = async () => {
+  const r = await fetch("/music_studio/import/start", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: currentSource, with_captions: false }),
+  });
+  const j = await r.json();
+  toast(j.error ? j.error : "capturing changes");
+  pollCapture();
+};
+
+$("cap-pause").onclick = async () => {
+  const j = await (await fetch("/music_studio/import/pause",
+                               { method: "POST" })).json();
+  toast(j.ok ? "dubbing paused — the radio gets the GPU back" : "nothing to pause");
+  pollCapture();
+};
+$("cap-resume").onclick = async () => {
+  const j = await (await fetch("/music_studio/import/resume",
+                               { method: "POST" })).json();
+  toast(j.ok ? "capture resumed where it left off" : (j.error || "cannot resume"));
+  pollCapture();
+};
+
+async function pollCapture() {
+  let s;
+  try { s = await (await fetch("/music_studio/import/status")).json(); }
+  catch (e) { return; }
+  const st = $("cap-state");
+  if (s.state === "running") {
+    const stage = (s.stages || [])[s.stage_idx];
+    st.textContent = `dubbing "${s.station || ""}" — ${stage ? stage.name : "…"}`;
+    st.className = "running";
+    if (s.track_n > 0) {
+      $("cap-stagebar").style.width = (s.track_i / s.track_n * 100) + "%";
+      $("cap-track").textContent = (s.current_track || "").split("/").pop();
+      $("cap-count").textContent = `${s.track_i}/${s.track_n}`;
+    } else {
+      $("cap-stagebar").style.width = "8%";
+      $("cap-track").textContent = "working…";
+      $("cap-count").textContent = "";
+    }
+    $("cap-totalbar").style.width = (s.overall_pct || 0) + "%";
+    $("cap-stage").textContent = "total capture";
+    $("cap-pct").textContent = (s.overall_pct || 0) + "%";
+  } else {
+    st.textContent = s.state === "failed" || s.state === "died"
+      ? `last capture ${s.state} — resumable`
+      : s.state === "paused" ? `capture paused (${s.station || ""})`
+      : s.state === "done" ? "last capture complete"
+      : "no capture running";
+    st.className = s.state === "failed" || s.state === "died" ? "failed" : "";
+    $("cap-stagebar").style.width = "0";
+    $("cap-totalbar").style.width = s.state === "done" ? "100%" : "0";
+    $("cap-track").textContent = "—";
+    $("cap-count").textContent = "";
+    $("cap-stage").textContent = "";
+    $("cap-pct").textContent = "";
+    if (s.state === "done" && pollCapture.wasRunning) loadStations();
+  }
+  $("cap-pause").style.display = s.state === "running" ? "" : "none";
+  $("cap-resume").style.display =
+    ["paused", "failed", "died", "cancelled"].includes(s.state) ? "" : "none";
+  pollCapture.wasRunning = s.state === "running";
+}
+
+/* ------------------------------------------------------ drag & drop */
+
+let dragDepth = 0;
+document.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  if (++dragDepth === 1) $("drop-overlay").classList.add("show");
+});
+document.addEventListener("dragleave", () => {
+  if (--dragDepth <= 0) { dragDepth = 0; $("drop-overlay").classList.remove("show"); }
+});
+document.addEventListener("dragover", (e) => e.preventDefault());
+
+function walkEntry(entry, out) {
+  return new Promise((resolve) => {
+    if (entry.isFile) {
+      entry.file((f) => { out.push(f); resolve(); }, resolve);
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const readAll = () => reader.readEntries(async (entries) => {
+        if (!entries.length) return resolve();
+        for (const e of entries) await walkEntry(e, out);
+        readAll();  // readEntries returns batches of ~100
+      }, resolve);
+      readAll();
+    } else resolve();
+  });
+}
+
+document.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  $("drop-overlay").classList.remove("show");
+  const files = [];
+  const items = e.dataTransfer.items;
+  if (items && items.length && items[0].webkitGetAsEntry) {
+    for (const it of [...items]) {
+      const entry = it.webkitGetAsEntry && it.webkitGetAsEntry();
+      if (entry) await walkEntry(entry, files);
+    }
+  } else {
+    files.push(...e.dataTransfer.files);
+  }
+  const audio = files.filter(f => /\.(flac|mp3|m4a|ogg|opus|wav|wma|aac|aiff)$/i
+                                  .test(f.name));
+  if (!audio.length) { toast("no audio files in that drop"); return; }
+  let done = 0, added = 0;
+  for (const f of audio) {
+    const fd = new FormData();
+    fd.append("file", f, f.name);
+    try {
+      const r = await fetch("/music_studio/station/upload",
+                            { method: "POST", body: fd });
+      const j = await r.json();
+      added += (j.added || []).length;
+    } catch (err) { /* keep going */ }
+    if (++done % 3 === 0 || done === audio.length)
+      toast(`uploading ${done}/${audio.length}…`);
+  }
+  toast(`${added} track(s) added to the station`);
+  await loadSetlist();
+  scan(true);
+});
+
+/* --------------------------------------------------------------- init */
+
+seedHistory();
+loadStations();
+loadSetlist();
+refreshGauge();
+pollCapture();
+setInterval(refreshGauge, 30000);
+setInterval(pollCapture, 3000);
+</script>
+</body>
+</html>

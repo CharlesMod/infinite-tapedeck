@@ -1,0 +1,15 @@
+venv/
+library/
+stations/
+radio/tank/
+radio/keepers/
+radio/*.jsonl
+radio/stations.json
+radio/weights.json
+analysis/*.json
+analysis/*.jsonl
+analysis/*.npy
+analysis/clap_windows/
+analysis/*.log
+__pycache__/
+*.pyc

@@ -1,0 +1,13 @@
+[Unit]
+Description=ComfyUI Music3 idle VRAM release
+After=comfyui-tapedeck.service
+BindsTo=comfyui-tapedeck.service
+
+[Service]
+Type=simple
+ExecStart=/path/to/venv/bin/python /path/to/tapedeck/vram_watchdog.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

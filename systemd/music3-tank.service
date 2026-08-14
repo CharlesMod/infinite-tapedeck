@@ -1,0 +1,14 @@
+[Unit]
+Description=Music3 radio tank daemon
+After=comfyui-tapedeck.service
+Wants=comfyui-tapedeck.service
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/tapedeck
+ExecStart=/path/to/venv/bin/python /path/to/tapedeck/radio/tank_daemon.py
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
