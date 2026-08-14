@@ -482,8 +482,10 @@ def refill_bundles(cards, per, per_n, count, weights_path, p):
         caption, bpm, target_s = sample_caption(v, card)
         lyr = (sample_lyrics(card) if v in lv
                else structural_tags(target_s))
+        # uses=2: one caption composes two different songs (the encoder seed
+        # is the composer), halving residency demand at zero quality cost
         out.append({"vein": v, "caption": caption, "lyrics": lyr,
-                    "bpm": bpm, "target_s": target_s})
+                    "bpm": bpm, "target_s": target_s, "uses": 2})
     unload_llm()
     return out
 
@@ -898,6 +900,9 @@ def main():
                     b["station"] = slug
                 save_bundle_queue(slug, bundles, other_bundles)
         b = bundles.pop(0)
+        b["uses"] = b.get("uses", 1) - 1
+        if b["uses"] > 0:
+            bundles.append(dict(b))  # back of the queue for its second song
         save_bundle_queue(slug, bundles, other_bundles)
         vein = b["vein"]
         caption, lyrics = b["caption"], b["lyrics"]
