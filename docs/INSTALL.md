@@ -42,11 +42,18 @@ All state lives under the repo dir: `library/` (your music), `stations/`,
   "comfy_host": "http://127.0.0.1:8188",
   "sibling_hosts": [],
   "llm_base": "http://127.0.0.1:8080",
-  "llm_model": "your-model-name",
+  "llm_model": null,
   "steps": 30,
-  "tank_target_s": 10800
+  "tank_target_s": 10800,
+  "caption_batch": 5
 }
 ```
+
+Single-machine GPU sharing is the default: the daemon frees the generator's
+weights, swaps the LLM in, writes `caption_batch` caption/lyric bundles in
+one residency, unloads (llama-swap's `/unload` is called if present), then
+generates the batch back-to-back. `llm_model: null` uses the first model
+your endpoint offers; `llm_base: null` disables the LLM entirely.
 
 - `llm_base` / `llm_model`: any OpenAI-compatible endpoint, used for caption
   variety and lyrics. Omit both and the radio runs on essence-card seeds.

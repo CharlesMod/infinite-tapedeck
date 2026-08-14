@@ -33,8 +33,8 @@ PAUSE_FLAG = f"{BASE}/radio/PAUSE"
 COMFY_OUT = f"{BASE}/ComfyUI/output"
 
 _cfg = {"comfy_host": "http://127.0.0.1:8188", "sibling_hosts": [],
-        "llm_base": None, "llm_model": None, "steps": 30,
-        "tank_target_s": 10800}
+        "llm_base": "http://127.0.0.1:8080", "llm_model": None,
+        "steps": 30, "tank_target_s": 10800, "caption_batch": 5}
 try:
     with open(f"{BASE}/radio/config.json") as _f:
         _cfg.update(json.load(_f))
@@ -42,9 +42,13 @@ except FileNotFoundError:
     pass
 M3 = _cfg["comfy_host"]
 SIBLINGS = list(_cfg["sibling_hosts"])
-POE = (_cfg["llm_base"].rstrip("/") + "/v1/chat/completions"
-       if _cfg["llm_base"] else None)
-LYRIC_MODEL = _cfg["llm_model"]
+# Single-machine default: the LLM (llama-swap et al.) shares the one card
+# with the generator. Captions and lyrics are written in batches per LLM
+# residency so the swap tax amortizes. llm_base=None disables the LLM and
+# the sampler falls back to essence-card seeds.
+LLM_URL = (_cfg["llm_base"] or "").rstrip("/") or None
+LLM_MODEL = _cfg["llm_model"]
+CAPTION_BATCH = int(_cfg["caption_batch"])
 
 STEPS = int(_cfg["steps"])
 CFG = 1.7
@@ -138,23 +142,95 @@ def hold_reason():
 
 # ------------------------------------------------------------------- lyrics
 
-def poe_chat(prompt, temperature=0.9, max_tokens=700):
-    """First call may swap the model in — allow for the load. Without a
-    configured LLM the sampler falls back to essence-card seeds."""
-    if not POE:
+_llm_model_cache = None
+
+
+def _resolve_model():
+    """llm_model unset -> first model the endpoint offers."""
+    global _llm_model_cache
+    if LLM_MODEL:
+        return LLM_MODEL
+    if _llm_model_cache:
+        return _llm_model_cache
+    try:
+        r = http_json(LLM_URL + "/v1/models", timeout=10)
+        _llm_model_cache = r["data"][0]["id"]
+        return _llm_model_cache
+    except Exception:
+        return None
+
+
+def llm_chat(prompt, temperature=0.9, max_tokens=900):
+    """First call swaps the model in (fast when page-cached). Thinking is
+    disabled where the template honors it, or reasoning models burn the
+    whole budget thinking and content comes back empty."""
+    if not LLM_URL:
+        return None
+    model = _resolve_model()
+    if not model:
         return None
     for attempt in (1, 2):
         try:
-            r = http_json(POE, {
-                "model": LYRIC_MODEL, "temperature": temperature,
+            r = http_json(LLM_URL + "/v1/chat/completions", {
+                "model": model, "temperature": temperature,
                 "max_tokens": max_tokens,
+                "chat_template_kwargs": {"enable_thinking": False},
                 "messages": [{"role": "user", "content": prompt}],
-            }, timeout=240)
+            }, timeout=300)
             return r["choices"][0]["message"]["content"].strip()
         except Exception as e:
-            log(f"poe attempt {attempt} failed: {e!r:.80}")
+            log(f"llm attempt {attempt} failed: {e!r:.80}")
             time.sleep(10)
     return None
+
+
+def free_music3():
+    """Hand the card over: drop the generator's weights and wait for VRAM."""
+    try:
+        http_json(M3 + "/free", {"unload_models": True, "free_memory": True},
+                  timeout=15)
+    except Exception:
+        return
+    for _ in range(15):
+        try:
+            used = int(subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.used",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5).stdout.strip())
+            if used < 5000:
+                return
+        except Exception:
+            return
+        time.sleep(2)
+
+
+def unload_llm():
+    """Hand the card back: evict the LLM before the next generation."""
+    try:
+        urllib.request.urlopen(LLM_URL + "/unload", timeout=65).read()
+    except Exception:
+        pass  # ttl will get it eventually; generation may just retry
+
+
+def refill_bundles(cards, per, weights_path):
+    """One LLM residency, several bundles: free the generator, write
+    CAPTION_BATCH caption/lyric sets across the neediest veins, unload."""
+    sim = dict(per)
+    picks = []
+    for _ in range(CAPTION_BATCH):
+        v = pick_vein(cards, sim, weights_path)
+        sim[v] = sim.get(v, 0.0) + 200.0  # assume a take lands, move on
+        picks.append(v)
+    free_music3()
+    out = []
+    for v in picks:
+        card = cards[v]
+        caption, bpm, target_s = sample_caption(v, card)
+        lyr = (sample_lyrics(card)
+               if "lyrics" in card.get("vocals", "").lower() else "")
+        out.append((v, caption, lyr, bpm, target_s))
+    unload_llm()
+    return out
 
 
 CAPTION_SCHEMA_EXAMPLE = (
@@ -201,12 +277,20 @@ def sample_caption(vein, card):
         "Output ONLY the caption text, three sections, no commentary."
     )
     for _ in range(2):
-        text = poe_chat(prompt, temperature=1.0, max_tokens=500)
+        text = llm_chat(prompt, temperature=1.0, max_tokens=700)
         if text and all(h in text for h in
                         ("Global Metadata:", "Vocal Details:", "Arrangement:")):
             return text, bpm, target_s
     log("caption fallback: using card seed")
-    return card["caption_seed"], bpm, target_s
+    # seeds predate the length discipline. Inject the duration INTO Global
+    # Metadata — trailing it after the outro description reads as post-song
+    # text and the encoder still ends early (measured: 16s takes).
+    seed_caption = card["caption_seed"].replace(
+        "Global Metadata: ",
+        f"Global Metadata: An approximately {mins}-minute piece with a "
+        "complete multi-section arc — intro, themes, development, peak, "
+        "reprise — before its outro. ", 1)
+    return seed_caption, bpm, target_s
 
 
 def sample_lyrics(card):
@@ -221,7 +305,7 @@ def sample_lyrics(card):
         "never instrument, mood, or production directions.\n"
         "Output ONLY the tagged lyrics."
     )
-    text = poe_chat(prompt, temperature=1.0, max_tokens=600)
+    text = llm_chat(prompt, temperature=1.0, max_tokens=800)
     if not text or "[" not in text:
         return ""
     # strip any parenthetical that reads as direction, not singing
@@ -437,15 +521,28 @@ def effective_weights(cards, weights_path):
     return {l: v / s for l, v in w.items()}
 
 
+_cooldown = {}  # vein -> unix ts until which it sits out (recent rejects)
+COOLDOWN_S = 600
+
+
+def cool_vein(vein):
+    _cooldown[vein] = time.time() + COOLDOWN_S
+
+
 def pick_vein(cards, per, weights_path):
     """Most-underfilled vein by RELATIVE deficit, so early fills interleave
-    across veins instead of grinding the largest one to target first."""
+    across veins instead of grinding the largest one to target first.
+    Recently-rejected veins sit out a cooldown — a vein that keeps missing
+    must not monopolize the card while the others could be banking takes."""
     w = effective_weights(cards, weights_path)
+    now = time.time()
     deficits = {}
     for label in cards:
         target = max(1.0, w[label] * TANK_TARGET_S)
         deficits[label] = max(0.0, target - per.get(label, 0.0)) / target
-    return max(deficits, key=deficits.get)
+    warm = {l: d for l, d in deficits.items() if _cooldown.get(l, 0) < now}
+    pool = warm or deficits  # all cooling -> ignore cooldowns
+    return max(pool, key=pool.get)
 
 
 def load_station(slug, cache):
@@ -470,6 +567,7 @@ def main():
     stations.ensure_registry()
     cache = {}
     last_slug = None
+    bundles = []
 
     while not _stop:
         slug = stations.active()
@@ -483,6 +581,7 @@ def main():
             log(f"station: {slug} ({len(cards)} vein(s)), "
                 f"target {TANK_TARGET_S/3600:.1f}h, steps {STEPS}")
             last_slug = slug
+            bundles = []  # bundles are per-station; stale ones are wrong moods
 
         janitor(p["meta"], p["tank"], p["keepers"])
         total, per = tank_seconds(p["meta"])
@@ -499,11 +598,11 @@ def main():
             time.sleep(LOOP_SLEEP)
             continue
 
-        vein = pick_vein(cards, per, p["weights"])
+        if not bundles:
+            log(f"writing {CAPTION_BATCH} bundles (LLM residency)")
+            bundles = refill_bundles(cards, per, p["weights"])
+        vein, caption, lyrics, bpm, target_s = bundles.pop(0)
         card = cards[vein]
-        caption, bpm, target_s = sample_caption(vein, card)
-        lyrics = (sample_lyrics(card)
-                  if "lyrics" in card.get("vocals", "").lower() else "")
         if TEST_SHORT:
             target_s = 45
         seed = random.randrange(2 ** 31)
@@ -524,8 +623,9 @@ def main():
         dur = duration_of(path)
         if dur < 0.5 * target_s:
             os.unlink(path)
+            cool_vein(vein)
             log(f"REJECT-short {card['name']} {dur:.0f}s "
-                f"(target ~{target_s}s)")
+                f"(target ~{target_s}s) — vein cools {COOLDOWN_S}s")
             if ONESHOT:
                 return
             continue
@@ -550,8 +650,9 @@ def main():
                 f"(thr {thr:.3f}) -> {os.path.basename(dest)}")
         else:
             os.unlink(path)
+            cool_vein(vein)
             log(f"REJECT {card['name']} {dur:.0f}s score {score:.3f} "
-                f"< thr {thr:.3f}")
+                f"< thr {thr:.3f} — vein cools {COOLDOWN_S}s")
         if ONESHOT:
             return
 
