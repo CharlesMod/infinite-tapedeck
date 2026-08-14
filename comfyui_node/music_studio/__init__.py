@@ -534,6 +534,12 @@ def _spawn_import(slug, with_captions):
     cmd = [VENV_PY, f"{ANALYSIS_SCRIPTS}/import_pipeline.py", "--station", slug]
     if with_captions:
         cmd.append("--with-captions")
+    # a capture must outlive this server: a plain child sits in our systemd
+    # cgroup and dies with every service restart (start_new_session does NOT
+    # escape a cgroup). A transient scope gets its own; plain child fallback
+    # where systemd-run is unavailable.
+    if shutil.which("systemd-run"):
+        cmd = ["systemd-run", "--user", "--scope", "--collect", "-q"] + cmd
     log = open(f"{ANALYSIS_SCRIPTS}/import_run.log", "a")
     _import_proc = subprocess.Popen(cmd, stdout=log, stderr=log,
                                     start_new_session=True)

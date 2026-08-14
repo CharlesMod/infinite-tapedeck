@@ -235,8 +235,10 @@
               color: var(--dim); }
   .barlabel span:first-child { max-width: 66%; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
-  #cap-buttons { display: flex; gap: .5rem; margin-top: .5rem; }
-  #cap-pause, #cap-resume { display: none; }
+  #dub-toggle { padding: .18rem .55rem; font-size: .72rem; margin-left: .5rem;
+                vertical-align: middle; border-radius: 7px; }
+  #dub-toggle.armed { color: var(--red); border-color: #7a2830;
+                      text-shadow: 0 0 7px var(--red); }
 
   #drop-overlay { position: fixed; inset: 0; background: #07040ee8;
     display: none; align-items: center; justify-content: center; z-index: 95;
@@ -335,16 +337,14 @@
       </div>
 
       <div class="rail-sec" style="margin-bottom:0">
-        <div class="rail-h">Dubbing</div>
+        <div class="rail-h">Dubbing
+          <button id="dub-toggle" title="pause / resume the capture" disabled>⏵</button>
+        </div>
         <div id="cap-state">no capture running</div>
         <div class="barwrap"><div class="bar" id="cap-stagebar"></div></div>
         <div class="barlabel"><span id="cap-track">—</span><span id="cap-count"></span></div>
         <div class="barwrap"><div class="bar" id="cap-totalbar"></div></div>
         <div class="barlabel"><span id="cap-stage"></span><span id="cap-pct"></span></div>
-        <div id="cap-buttons">
-          <button id="cap-pause" class="small-btn">⏸ pause capture</button>
-          <button id="cap-resume" class="small-btn">▶ resume capture</button>
-        </div>
       </div>
     </div>
 
@@ -654,16 +654,17 @@ $("sl-capture").onclick = async () => {
   pollCapture();
 };
 
-$("cap-pause").onclick = async () => {
-  const j = await (await fetch("/music_studio/import/pause",
-                               { method: "POST" })).json();
-  toast(j.ok ? "dubbing paused — the radio gets the GPU back" : "nothing to pause");
-  pollCapture();
-};
-$("cap-resume").onclick = async () => {
-  const j = await (await fetch("/music_studio/import/resume",
-                               { method: "POST" })).json();
-  toast(j.ok ? "capture resumed where it left off" : (j.error || "cannot resume"));
+let dubState = "idle";
+$("dub-toggle").onclick = async () => {
+  if (dubState === "running") {
+    const j = await (await fetch("/music_studio/import/pause",
+                                 { method: "POST" })).json();
+    toast(j.ok ? "dubbing paused — the radio gets the GPU back" : "nothing to pause");
+  } else {
+    const j = await (await fetch("/music_studio/import/resume",
+                                 { method: "POST" })).json();
+    toast(j.ok ? "dubbing resumed where it left off" : (j.error || "cannot resume"));
+  }
   pollCapture();
 };
 
@@ -703,9 +704,18 @@ async function pollCapture() {
     $("cap-pct").textContent = "";
     if (s.state === "done" && pollCapture.wasRunning) loadStations();
   }
-  $("cap-pause").style.display = s.state === "running" ? "" : "none";
-  $("cap-resume").style.display =
-    ["paused", "failed", "died", "cancelled"].includes(s.state) ? "" : "none";
+  dubState = s.state || "idle";
+  const t = $("dub-toggle");
+  if (dubState === "running") {
+    t.textContent = "⏸"; t.disabled = false; t.classList.add("armed");
+    t.title = "pause dubbing — the radio gets the GPU back";
+  } else if (["paused", "failed", "died", "cancelled"].includes(dubState)) {
+    t.textContent = "⏵"; t.disabled = false; t.classList.remove("armed");
+    t.title = "resume dubbing where it left off";
+  } else {
+    t.textContent = "⏵"; t.disabled = true; t.classList.remove("armed");
+    t.title = "nothing to resume — start a capture via ⟳ or the dubbing bay";
+  }
   pollCapture.wasRunning = s.state === "running";
 }
 
