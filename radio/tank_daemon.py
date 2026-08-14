@@ -196,6 +196,9 @@ def hold_reason():
 
 # ------------------------------------------------------------------- lyrics
 
+_llm_down_until = 0.0
+
+
 _llm_model_cache = None
 
 
@@ -229,11 +232,16 @@ def llm_chat(prompt, temperature=0.9, max_tokens=900):
                 "max_tokens": max_tokens,
                 "chat_template_kwargs": {"enable_thinking": False},
                 "messages": [{"role": "user", "content": prompt}],
-            }, timeout=300)
-            return r["choices"][0]["message"]["content"].strip()
+            }, timeout=240)
+            out = r["choices"][0]["message"]["content"].strip()
+            if out:
+                return out
+            raise ValueError("empty content")
         except Exception as e:
             log(f"llm attempt {attempt} failed: {e!r:.80}")
             time.sleep(10)
+    _llm_down_until = time.time() + 600
+    log("LLM circuit OPEN for 10 min — captions fall back to card seeds")
     return None
 
 
