@@ -236,6 +236,9 @@
   #sl-count { font-size: .62rem; color: #14663f; margin-top: .35rem; }
 
   /* capture = dubbing section */
+  #deck-line { font-size: .66rem; color: var(--cyan); letter-spacing: .08em;
+    margin-top: .5rem; text-shadow: 0 0 6px #00e5ff50; opacity: .9;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #cap-state { font-size: .68rem; color: var(--dim); margin-bottom: .35rem;
                letter-spacing: .08em; text-transform: uppercase; }
   #cap-state.running { color: var(--red); text-shadow: 0 0 7px var(--red); }
@@ -392,6 +395,7 @@
           <div class="g-bar"><div class="g-fill" id="sys-vram"
             style="background:linear-gradient(90deg,var(--pink),var(--red))"></div></div>
           <span class="g-min" id="sys-vram-n">—</span></div>
+        <div id="deck-line">DECK · <span id="deck-msg">listening for the daemon…</span></div>
       </div>
 
       <div class="rail-sec" style="margin-bottom:0">
@@ -726,6 +730,7 @@ $("sl-capture").onclick = async () => {
 };
 
 let dubState = "idle";
+let cardOwner = "idle";
 $("dub-toggle").onclick = async () => {
   if (dubState === "running") {
     const j = await (await fetch("/music_studio/import/pause",
@@ -746,7 +751,8 @@ async function pollCapture() {
   const st = $("cap-state");
   if (s.state === "running") {
     const stage = (s.stages || [])[s.stage_idx];
-    st.textContent = `dubbing "${s.station || ""}" — ${stage ? stage.name : "…"}`;
+    st.textContent = `dubbing "${s.station || ""}" — ${stage ? stage.name : "…"}` +
+      (cardOwner === "dubbing" ? " · ON CARD" : " · waiting for the card");
     st.className = "running";
     if (s.track_n > 0) {
       $("cap-stagebar").style.width = (s.track_i / s.track_n * 100) + "%";
@@ -861,8 +867,28 @@ async function pollGpu() {
     if (s.error) return;
     $("sys-gpu").style.width = s.util + "%";
     $("sys-gpu-n").textContent = s.util + "%";
-    // digitizer runs whenever the card is working — tape being synthesized
-    $("mech").classList.toggle("synth", s.util >= 25);
+  } catch (e) { /* server restarting */ }
+  try {
+    const d = await (await fetch("/music_studio/deckstate")).json();
+    // one card, one claimant: the digitizer runs ONLY while a take is
+    // actually being synthesized — no more strobing on util noise
+    $("mech").classList.toggle("synth", d.owner === "generation");
+    cardOwner = d.owner || "idle";
+    const OWNER = {
+      generation: "▶ SYNTHESIZING A TAKE",
+      dubbing: "⏺ DUBBING (captioner on card)",
+      lyricist: "✎ LYRICIST (writing captions/lyrics)",
+      other: "⚠ CARD HELD BY SOMETHING ELSE (game?)",
+      idle: "· card idle",
+    };
+    const age = d.age_s == null ? "" :
+      d.age_s < 90 ? ` · ${d.age_s}s ago` : ` · ${Math.floor(d.age_s / 60)}m ago`;
+    $("deck-msg").textContent =
+      (OWNER[d.owner] || d.owner) + "  —  " + (d.msg || "…") + age;
+    // the waiting screen explains itself with the daemon's own words
+    if ($("title").textContent.startsWith("SYNTHESIZING"))
+      $("stats").textContent =
+        ((OWNER[d.owner] || "") + " — " + (d.msg || "") + age).toUpperCase();
     const pct = s.vram_used_mb / s.vram_total_mb * 100;
     $("sys-vram").style.width = pct + "%";
     $("sys-vram-n").textContent = (s.vram_used_mb / 1024).toFixed(1) + "G";

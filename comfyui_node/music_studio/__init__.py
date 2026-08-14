@@ -268,6 +268,63 @@ async def status(request):
 
 # ------------------------------------------------------------------ stations
 
+def _card_owner():
+    """Who is actually SPENDING the GPU right now — one card, several
+    claimants, and the deck must show work, not liveness. Classified by
+    per-process VRAM attribution."""
+    mem = {"generation": 0, "dubbing": 0, "lyricist": 0, "other": 0}
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,used_memory",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5).stdout
+        for line in out.strip().splitlines():
+            try:
+                pid_s, mem_s = [x.strip() for x in line.split(",")]
+                pid, mb = int(pid_s), int(mem_s)
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                    cmd = f.read().decode(errors="replace")
+            except (ValueError, OSError):
+                continue
+            if "caption_pass" in cmd:
+                mem["dubbing"] += mb
+            elif "llama-server" in cmd:
+                mem["lyricist"] += mb
+            elif pid == os.getpid():
+                mem["generation"] += mb
+            elif mb > 400:
+                mem["other"] += mb
+    except Exception:
+        pass
+    running, pending = PromptServer.instance.prompt_queue.get_current_queue()
+    if running and mem["generation"] > 3000:
+        return "generation", mem
+    if mem["dubbing"] > 3000:
+        return "dubbing", mem
+    if mem["lyricist"] > 1500:
+        return "lyricist", mem
+    if mem["other"] > 3000:
+        return "other", mem
+    return "idle", mem
+
+
+@PromptServer.instance.routes.get("/music_studio/deckstate")
+async def deckstate(request):
+    """The tank daemon's last words, their age, and the card's current
+    claimant — the deck's answer to 'what is the machine doing right now
+    and why am I waiting?'"""
+    try:
+        with open(f"{BASE}/radio/daemon_state.json") as f:
+            st = json.load(f)
+        st["age_s"] = max(0, int(time.time()) - int(st.get("ts", 0)))
+    except Exception:
+        st = {"msg": "daemon has not spoken yet", "age_s": None}
+    owner, mem = _card_owner()
+    st["owner"] = owner
+    st["owner_mem"] = mem
+    return web.json_response(st)
+
+
 @PromptServer.instance.routes.get("/music_studio/gpu")
 async def gpu(request):
     """Whole-card utilization and VRAM for the deck's meter bridge — any
