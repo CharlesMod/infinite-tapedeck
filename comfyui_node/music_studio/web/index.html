@@ -118,6 +118,13 @@
   #desc { font-size: .7rem; line-height: 1.45; color: #1e9d64; margin-top: .4rem;
           max-height: 2.9em; overflow: hidden; cursor: pointer; transition: max-height .3s; }
   #desc.open { max-height: 30em; overflow-y: auto; }
+  #lyrics { display: none; font-size: .72rem; line-height: 1.5; color: var(--vfd);
+            text-shadow: 0 0 6px #39ffa080; white-space: pre-wrap; margin-top: .5rem;
+            max-height: 3em; overflow: hidden; cursor: pointer;
+            border-top: 1px dashed #1c3a2b; padding-top: .4rem;
+            transition: max-height .3s; }
+  #lyrics.has { display: block; }
+  #lyrics.open { max-height: 34em; overflow-y: auto; }
 
   /* ---------------- VU meters ---------------- */
   #vu { display: grid; grid-template-columns: 1.1rem 1fr; gap: .3rem .6rem;
@@ -276,6 +283,7 @@
         <div id="title">PRESS PLAY</div>
         <div id="stats">the deck winds fresh tape while you listen</div>
         <div id="desc" title="tap to expand"></div>
+        <div id="lyrics" title="tap for the full lyric sheet"></div>
       </div>
 
       <div id="vu">
@@ -393,6 +401,10 @@ function show(t, replay) {
     (replay ? " · REWIND" : "");
   $("desc").textContent = t.caption;
   $("desc").classList.remove("open");
+  const ly = $("lyrics");
+  ly.textContent = t.lyrics || "";
+  ly.classList.toggle("has", !!t.lyrics);
+  ly.classList.remove("open");
   $("keep").classList.remove("done");
   $("keep").textContent = "★ keep";
   const p = $("player");
@@ -446,6 +458,7 @@ $("keep").onclick = async () => {
   }
 };
 $("desc").onclick = () => $("desc").classList.toggle("open");
+$("lyrics").onclick = () => $("lyrics").classList.toggle("open");
 $("player").addEventListener("ended", next);
 
 /* deck instrumentation: reels, counter, VU */
