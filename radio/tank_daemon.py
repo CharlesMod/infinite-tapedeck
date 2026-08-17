@@ -115,8 +115,24 @@ STEPS = int(_cfg["steps"])
 STARVED_STEPS = int(_cfg.get("starved_steps", 20))
 STARVED_BELOW_TAKES = int(_cfg.get("starved_below_takes", 5))
 DIT_MODEL = _cfg.get("dit_model", "minimax_music3_dit_fp16.safetensors")
-CFG = 1.7
-TOP_K = 50
+# TWO different guidance knobs, which shared one constant purely because this
+# file had one named CFG. KSampler's cfg guides the DiT's diffusion; the text
+# encoder's cfg_scale guides the AUTOREGRESSIVE acoustic-token sampler in
+# comfy/ldm/minimax_music/ar.py, which is the thing actually choosing notes
+# one code at a time. They are unrelated stages and need not agree.
+CFG = 1.7                     # diffusion guidance (KSampler)
+TOP_K = 50                    # kept as the fallback when jitter is disabled
+
+# The AR sampler's own diversity controls, rolled per take. top_k is how many
+# candidate codes are live at each step and cfg_scale is how hard the
+# conditioned distribution is pushed from the unconditioned one — between them
+# they decide how much freedom the model has choosing each next note, which no
+# amount of caption wording can reach. Model defaults are 1.5 / 50; this file
+# had been sending 1.7, i.e. tighter adherence and less variety than stock,
+# for every take ever generated. Set either range to a pair of equal numbers
+# to pin it.
+AR_CFG_RANGE = (1.4, 1.8)
+AR_TOP_K_RANGE = (40, 120)
 TANK_TARGET_S = int(_cfg["tank_target_s"])
 FOREIGN_VRAM_MB = 3000        # non-ComfyUI VRAM above this = game running
 LOOP_SLEEP = 60               # between top-up checks when tank is full/held
@@ -1013,7 +1029,22 @@ def critic_bar(vein, critic, scores, bias=0.0):
 
 # --------------------------------------------------------------- generation
 
-def build_graph(caption, lyrics, seed, max_duration, steps=None):
+def roll_engine():
+    """The generator's own diversity settings, per take.
+
+    Separate AR seed on purpose: the text encoder's seed drives acoustic-token
+    sampling and KSampler's drives diffusion noise. They are independent
+    stages, and feeding both the same number tied two draws together for no
+    reason."""
+    return {
+        "ar_seed": random.randrange(2 ** 31),
+        "ar_cfg": round(random.uniform(*AR_CFG_RANGE), 2),
+        "top_k": random.randint(*AR_TOP_K_RANGE),
+    }
+
+
+def build_graph(caption, lyrics, seed, max_duration, steps=None, eng=None):
+    eng = eng or {"ar_seed": seed, "ar_cfg": CFG, "top_k": TOP_K}
     return {
         "1": {"class_type": "CLIPLoader", "inputs": {
             "clip_name": "minimax_music3_text_encoder_pruned_int8_convrot.safetensors",
@@ -1025,8 +1056,8 @@ def build_graph(caption, lyrics, seed, max_duration, steps=None):
             "vae_name": "minimax_music3_dav.safetensors"}},
         "4": {"class_type": "MiniMaxMusic3TextEncode", "inputs": {
             "clip": ["1", 0], "caption": caption, "lyrics": lyrics,
-            "seed": seed, "max_duration": float(max_duration),
-            "cfg_scale": CFG, "top_k": TOP_K}},
+            "seed": eng["ar_seed"], "max_duration": float(max_duration),
+            "cfg_scale": eng["ar_cfg"], "top_k": eng["top_k"]}},
         "5": {"class_type": "ConditioningZeroOut",
               "inputs": {"conditioning": ["4", 0]}},
         "6": {"class_type": "EmptyMiniMaxMusic3LatentAudio", "inputs": {
@@ -1046,11 +1077,11 @@ def build_graph(caption, lyrics, seed, max_duration, steps=None):
     }
 
 
-def generate(caption, lyrics, seed, max_duration, steps=None):
+def generate(caption, lyrics, seed, max_duration, steps=None, eng=None):
     pid = http_json(M3 + "/prompt",
                     {"prompt": build_graph(caption, lyrics, seed,
                                            max_duration,
-                                           steps)})["prompt_id"]
+                                           steps, eng)})["prompt_id"]
     t0 = time.time()
     while time.time() - t0 < 1200:
         if _stop:
@@ -1323,6 +1354,7 @@ def main():
         if TEST_SHORT:
             target_s = 45
         seed = random.randrange(2 ** 31)
+        eng = roll_engine()
         lyr_mode = ("words" if vein in lyric_veins(cards)
                     else "tags" if lyrics else "none")
         # First takes into an empty spool are the showcase pair — full
@@ -1335,7 +1367,8 @@ def main():
                 else f" steps={STARVED_STEPS} (catch-up)"
                 if steps_now != STEPS else "")
         log(f"generating: vein={card['name']} bpm={bpm} "
-            f"len<={target_s}s seed={seed} lyrics={lyr_mode}{mode}")
+            f"len<={target_s}s seed={seed} lyrics={lyr_mode}"
+            f" top_k={eng['top_k']} arcfg={eng['ar_cfg']}{mode}")
 
         # final gate right before taking the card
         if hold_reason():
@@ -1345,7 +1378,7 @@ def main():
             unload_llm()
         # max_duration is a cap the encoder undershoots — never let it bind;
         # length is driven by the caption's stated duration and arc instead
-        path, status = generate(caption, lyrics, seed, 300, steps_now)
+        path, status = generate(caption, lyrics, seed, 300, steps_now, eng)
         if not path:
             # Failure class: a hung ComfyUI holds queue_running forever and
             # every cycle burns a 20-minute timeout — slow-motion freeze.
@@ -1405,6 +1438,9 @@ def main():
                         "score": round(score, 3), "threshold": round(thr, 3),
                         "relief": round(_relief.get(vein, 0.0), 3),
                         "bpm": bpm, "seed": seed, "steps": steps_now,
+                        # banked with the take so a listener's keep/skip can
+                        # later be read back against the settings that made it
+                        "engine": eng,
                         "caption": caption, "lyrics": lyrics,
                         "created": int(time.time()), "consumed": False,
                     }) + "\n")
