@@ -675,7 +675,14 @@ def sample_arc(env):
     # describes — the most common one — and let the generic phrases cover
     # the shapes the card never mentioned.
     if stated and stated not in ARC_PHRASES.values():
-        if pick == max(shapes, key=shapes.get):
+        # Which shape the hand-written phrase actually describes. Defaults to
+        # the vein's most common one, which is usually right — but not
+        # always: "verse restraint, chorus lift, bridge dip, final chorus
+        # peak" is a build to the end, in a vein that is mostly mid-peak.
+        # Guessing wrong sends the majority of takes the wrong shape, so a
+        # card may say outright with energy_arc_shape.
+        if pick == (env.get("energy_arc_shape")
+                    or max(shapes, key=shapes.get)):
             return stated
     return ARC_PHRASES.get(pick, stated)
 
