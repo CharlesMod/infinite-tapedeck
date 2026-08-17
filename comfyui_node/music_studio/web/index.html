@@ -55,11 +55,17 @@
   }
 
   /* ---------------- cassette window ---------------- */
+  /* The panel is stretched to the rail's height by the grid, so the tape
+     window takes up whatever slack that leaves — a deeper window rather
+     than dead chassis under the footer. grow-but-never-shrink: when a long
+     caption makes the column the taller one, the transport keeps its size. */
+  #card { display: flex; flex-direction: column; }
   #cassette {
     background: linear-gradient(180deg, #0d0a17, #090612);
     border: 1px solid #322a52; border-radius: 10px;
     padding: .9rem 1rem .7rem; margin-bottom: .9rem;
     box-shadow: inset 0 0 24px #000, inset 0 0 60px #12093080;
+    flex: 1 0 auto; display: flex; flex-direction: column;
   }
   #tape-label {
     display: flex; justify-content: space-between; align-items: center;
@@ -74,7 +80,10 @@
                color: var(--accent, var(--dim));
                text-shadow: 0 0 6px var(--accent, transparent); }
   #side { font-size: .62rem; color: var(--dim); letter-spacing: .2em; }
-  #mech-wrap { position: relative; }
+  /* the transport centres in the taller window; the SVG keeps its aspect
+     ratio, so reels and tape path never distort */
+  #mech-wrap { position: relative; flex: 1 0 auto;
+               display: flex; align-items: center; }
   #mech { display: block; width: 100%; height: auto; }
   #mech .bit { fill: var(--cyan); opacity: 0; }
   #mech.synth .bit { animation: bit-in 1.6s ease-in infinite; }
