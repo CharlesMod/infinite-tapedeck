@@ -71,18 +71,39 @@ def cap_excludes(cards, per_n, count):
     return lv if sung / count >= LYRIC_CAP else set()
 
 
-def structural_tags(target_s):
+# Instrumental section forms, as the body between intro and outro.
+#
+# One fixed skeleton used to serve every take: instrumental, instrumental,
+# bridge, then padding — the bridge always fourth, five distinct skeletons in
+# total across every possible length. With sung takes capped at 25%, that was
+# one section form for three quarters of the radio. These tags are executable
+# structure, so that was not cosmetic: it was every song having the same plan.
+#
+# Kept to tags the generator already handles, and each form is a shape rather
+# than a list — repeating a form's own cycle keeps it recognisable when a
+# longer target needs more sections.
+INSTRUMENTAL_FORMS = {
+    "arch": ["instrumental", "bridge", "instrumental"],
+    # never returns to the same material; rondo deliberately does
+    "through_composed": ["instrumental", "interlude", "break", "solo",
+                         "breakdown"],
+    "build_drop": ["build", "drop", "breakdown", "build", "drop"],
+    "rondo": ["instrumental", "interlude", "instrumental", "solo"],
+    "ostinato": ["instrumental", "instrumental", "break", "instrumental"],
+    "suite": ["instrumental", "bridge", "interlude", "instrumental"],
+}
+
+
+def structural_tags(target_s, form=None):
     """Tag-only lyric sheet for instrumentals. The lyric vein outperforms
     because section tags are executable structure and structure is length —
     so every vein gets the scaffold, without putting words in its mouth."""
     mins = max(1, int(target_s) // 60)
-    body = ["[intro]"]
-    for i in range(max(2, mins + 1)):
-        body.append("[instrumental]")
-        if i == 1:
-            body.append("[bridge]")
-    body.append("[outro]")
-    return "\n\n".join(body)
+    name = form or random.choice(list(INSTRUMENTAL_FORMS))
+    cycle = INSTRUMENTAL_FORMS[name]
+    want = max(2, mins + 1)
+    body = [cycle[i % len(cycle)] for i in range(want)]
+    return "\n\n".join(["[intro]"] + [f"[{s}]" for s in body] + ["[outro]"])
 # Adaptive bar (Dean's design): every critic reject eases that vein's bar a
 # little so dead air self-limits; the next accept snaps it back to the
 # calibrated level. Relief is tactical, never a redefinition of taste.
@@ -396,6 +417,23 @@ def fallback_caption(vein, card):
         f"Global Metadata: An approximately {mins}-minute piece with a "
         "complete multi-section arc — intro, themes, development, peak, "
         "reprise — before its outro. ", 1)
+    # The seed states the vein's dominant arc, twice. Without an LLM this is
+    # the ONLY caption path, so leaving it alone would mean every take of
+    # every vein has the same shape for anyone running without one. Swap the
+    # baked phrase for this take's roll. Hand-tuned seeds do not use these
+    # exact phrases, so they are left untouched by design.
+    arc = sample_arc(env)
+    if arc:
+        for phrase in ARC_PHRASES.values():
+            if phrase != arc and phrase in seed_caption:
+                seed_caption = seed_caption.replace(phrase, arc)
+                break
+    # without an LLM this seed is the only caption there is, so the technique
+    # roll has to reach it here or those installs get none at all
+    seed_caption = seed_caption.rstrip()
+    if seed_caption.endswith("."):
+        seed_caption = seed_caption[:-1]
+    seed_caption += f", built around {random.choice(TECHNIQUES)}."
     return seed_caption, bpm, target_s
 
 
@@ -601,14 +639,128 @@ CAPTION_SCHEMA_EXAMPLE = (
 )
 
 
+# Must agree with analysis/import_pipeline.ARC_PHRASES and cluster.ARC_SHAPES.
+ARC_PHRASES = {
+    "mid_peak": "builds to a mid peak and lands soft",
+    "builds_to_end": "builds steadily and peaks at the end",
+    "front_loaded": "starts strong and eases off",
+}
+
+
+def sample_arc(env):
+    """Roll this take's energy shape from the vein's own distribution.
+
+    The vein's mean arc is not a shape any particular track has — averaging
+    80+ tracks cancels their differences and leaves the universal "intros are
+    quieter", so every vein reads as mid-peak. Sending that one phrase every
+    time made generation strictly narrower than the library it models: a
+    corpus measured at 62% mid-peak / 25% builds-to-end / 13% front-loaded
+    was producing 100% mid-peak, so a quarter of its dynamic range was
+    unreachable. Rolling per take, like bpm and key, restores the spread.
+
+    Cards written before this existed — and hand-tuned cards, whose arc
+    phrases are better than anything generated here — have no distribution,
+    and keep their single stated arc."""
+    shapes = (env or {}).get("energy_shapes")
+    stated = (env or {}).get("energy_arc", "")
+    if not shapes:
+        return stated
+    labels = [s for s in shapes if shapes[s] > 0]
+    if not labels:
+        return stated
+    pick = random.choices(labels, weights=[shapes[s] for s in labels])[0]
+    # A hand-written arc describes this vein's usual shape, and does it far
+    # better than the three generic phrases here ("verse restraint → chorus
+    # lift → bridge dip → final chorus peak"). Keep it for the shape it
+    # describes — the most common one — and let the generic phrases cover
+    # the shapes the card never mentioned.
+    if stated and stated not in ARC_PHRASES.values():
+        if pick == max(shapes, key=shapes.get):
+            return stated
+    return ARC_PHRASES.get(pick, stated)
+
+
+# The negative lookahead does the work a trailing \b cannot: \b sits between
+# two word characters, so "F#" followed by "/" would fail it and backtrack to
+# a bare "F", silently transposing the key. Requiring "not followed by a
+# letter" keeps the accidental and still refuses to read the G in "Great".
+KEY_RE = re.compile(r"\b([A-G][#b♯♭]?)(?![A-Za-z])(?:\s+(major|minor))?")
+
+# Compositional technique, rolled per take.
+#
+# Everything else the caption varies is surface: which instrument, how fast,
+# how long, how bright. Nothing asked for anything to HAPPEN in the music, so
+# takes came out as the same piece in different clothes. These are phrased as
+# events a text-to-music model can act on — no theory vocabulary, each one
+# something you could point at in a waveform.
+TECHNIQUES = [
+    "a call-and-response between the lead and a second, answering voice",
+    "one repeating figure held underneath while the harmony moves around it",
+    "a key change lifting the final section",
+    "a half-time feel for one section, then back to the original pulse",
+    "everything dropping away to a single element before the last section",
+    "a countermelody entering in the second half to answer the main theme",
+    "the opening theme returning at the end played by a different instrument",
+    "the main figure displaced off the beat, landing late against the pulse",
+    "layers stacked one at a time, then stripped back to where it started",
+    "a tempo pull-back easing into the closing section",
+    "syncopated accents cutting across a steady pulse",
+    "a solo passage that develops the main motif instead of repeating it",
+    "a shift from bright harmony to a darker mode partway through",
+    "call-and-answer traded between the low and high registers",
+    "a build made from filtering and texture alone, with no new instruments",
+    "the melody returning in longer, slower notes near the end",
+    "a breakdown to bare percussion before the final section",
+    "two contrasting themes alternating, the second gaining ground each time",
+]
+
+
+def sample_key(env):
+    """One key from the vein's own keys, in either card dialect.
+
+    Auto-generated cards write a plain list ("C major, G major, D minor");
+    hand-tuned ones write prose ("major-leaning (C, G, D major; D minor for
+    the wistful ones)"). The old parser only handled the parenthesised form,
+    so every auto card — every new install — silently produced no key at all
+    and the prompt fell back to "your choice". It also split on commas after
+    taking the parenthetical, which dropped the mode and left bare "C"."""
+    raw = (env or {}).get("keys", "") or ""
+    if "(" in raw:  # prose form: the parenthetical holds the actual keys
+        raw = raw.split("(", 1)[1].rsplit(")", 1)[0]
+    raw = raw.split(";")[0]
+    # Pull key-like tokens out rather than splitting on punctuation: real
+    # cards write "C, G, D major", "G/D/A minor" and "G major for the warm
+    # resolves", and a comma split turns the last two into a single unusable
+    # "key". The note letter stays case-sensitive on purpose — a lowercase
+    # "a" in surrounding prose is a word, not a key.
+    found = KEY_RE.findall(raw)
+    if not found:
+        return ""
+    # A group states its mode once, at the end: "C, G, D major" is three
+    # major keys, and "G/D/A minor, G major" is three minor keys and one
+    # major. So a bare note takes the next mode stated after it, not the
+    # last one in the string — reading backwards would turn that G/D/A
+    # minor group major.
+    keys, pending = [], []
+    for note, mode in found:
+        pending.append(note)
+        if mode:
+            keys += [f"{n} {mode}" for n in pending]
+            pending = []
+    trailing = next((m for _, m in reversed(found) if m), "")
+    keys += [f"{n} {trailing}".strip() for n in pending]
+    return random.choice(keys) if keys else ""
+
+
 def sample_caption(vein, card):
     """Roll concrete constraints here (LLMs randomize poorly), then have
     Gemma write a fresh caption inside them."""
     env = card["envelope"]
     bpm = random.randint(int(env["bpm"][0]), int(env["bpm"][1]))
-    key = random.choice(env["keys"].split("(")[-1].rstrip(")").split(";")[0]
-                        .split(",")).strip() if "(" in env["keys"] else ""
+    key = sample_key(env)
     axes = random.sample(card["mutation_axes"], k=min(2, len(card["mutation_axes"])))
+    arc = sample_arc(env)
+    technique = random.choice(TECHNIQUES)
     lo, hi = card["envelope"]["length_s"]
     target_s = random.randint(int(lo), int(hi))
 
@@ -622,7 +774,7 @@ def sample_caption(vein, card):
         f"NEVER LOSE: {'; '.join(card['fixed_core'])}\n"
         f"VOCALS: {card['vocals']}\n"
         f"CONSTRAINTS: {bpm} BPM. Key feel: {key or 'your choice within the vein'}. "
-        f"Spectral character: {env['spectral']}. Energy shape: {env['energy_arc']}.\n"
+        f"Spectral character: {env['spectral']}. Energy shape: {arc}.\n"
         f"TARGET LENGTH: about {mins} minutes — state the approximate duration "
         "in Global Metadata (e.g. 'a four-minute piece'), and write the "
         "Arrangement as at least five named sections in sequence (intro, "
@@ -631,6 +783,10 @@ def sample_caption(vein, card):
         "accounted for. The model ends songs early when the arc is thin — "
         "give it a complete journey.\n"
         f"VARY THESE (be specific, commit to concrete choices): {'; '.join(axes)}.\n"
+        # its own line, not folded into VARY THESE: this is the one thing the
+        # piece should DO, and it loses to instrument choice when they compete
+        f"TECHNIQUE — build the arrangement around this and name where it "
+        f"happens: {technique}.\n"
         "Do not mention any real artist, band, game, or song name. "
         "Output ONLY the caption text, three sections, no commentary."
     )

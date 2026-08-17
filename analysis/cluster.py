@@ -28,6 +28,29 @@ A = sys.argv[2] if len(sys.argv) > 2 else f"{BASE}/analysis"
 # Below this corpus size, clustering is noise: the folder IS the mood.
 SINGLE_VEIN_BELOW = 24
 
+# The three ways a track can carry its energy across its length. Kept in one
+# place because the sampler in radio/tank_daemon.py has to agree with it.
+ARC_SHAPES = ("mid_peak", "builds_to_end", "front_loaded")
+
+
+def arc_shape(thirds):
+    """Which shape a single track's first/middle/last-third energy describes."""
+    a, b, c = thirds
+    if b >= a and b >= c:
+        return "mid_peak"
+    if c >= b >= a:
+        return "builds_to_end"
+    return "front_loaded"
+
+
+def arc_distribution(thirds_rows):
+    """What share of a vein's tracks does each shape. Every shape is present
+    as a key even at 0.0, so a consumer can weight over it without guessing
+    which names exist."""
+    counts = Counter(arc_shape(row) for row in thirds_rows)
+    n = sum(counts.values()) or 1
+    return {s: round(counts.get(s, 0) / n, 3) for s in ARC_SHAPES}
+
 
 def load():
     try:
@@ -116,7 +139,16 @@ def vein_stats(idx, keys, feats, emb, labels, label):
         "duration_median_s": float(np.median(dur)),
         "centroid_hz_median": float(np.median(cent)),
         "onset_per_s_median": float(np.median(on)),
+        # The mean arc is kept because other stages read it, but it is a poor
+        # description of a vein: averaging 80+ tracks cancels the per-song
+        # variation and leaves only the universal "intros are quieter", so
+        # every vein converges on mid-peak (measured: all four veins of a
+        # 443-track corpus, a label that then differentiates nothing).
+        # energy_shapes is the honest version — what share of the vein's own
+        # tracks actually does each thing — so generation can span the same
+        # range instead of always being told the mode.
         "energy_arc": [round(float(x), 4) for x in thirds.mean(axis=0)],
+        "energy_shapes": arc_distribution(thirds),
         "top_keys": keys_c,
         "top_artists": artists,
         "central_tracks": ranked[:10],

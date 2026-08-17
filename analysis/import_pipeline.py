@@ -284,6 +284,23 @@ def sentence(text):
     return text if text.endswith((".", "!", "?", ";")) else text + "."
 
 
+# Verb clauses, so they read correctly after "an instrumental piece that".
+# The keys match cluster.ARC_SHAPES and radio/tank_daemon.py's sampler.
+ARC_PHRASES = {
+    "mid_peak": "builds to a mid peak and lands soft",
+    "builds_to_end": "builds steadily and peaks at the end",
+    "front_loaded": "starts strong and eases off",
+}
+
+
+def dominant_shape(v):
+    """Fallback for veins.json written before energy_shapes existed."""
+    a = v["energy_arc"]
+    if a[1] >= a[0] and a[1] >= a[2]:
+        return "mid_peak"
+    return "builds_to_end" if a[2] >= a[1] >= a[0] else "front_loaded"
+
+
 def auto_cards():
     """Starter essence cards from vein statistics — enough to run the radio.
     Never overwrites a hand-tuned essence_cards.json; writes the _auto file
@@ -310,13 +327,15 @@ def auto_cards():
                   if vocal > 0.5 else
                   "occasional vocals; default instrumental" if vocal > 0.15
                   else "none — fully instrumental")
-        arc = v["energy_arc"]
-        # phrased as verb clauses so they read correctly after "a piece that"
-        arc_desc = ("builds to a mid peak and lands soft"
-                    if arc[1] >= arc[0] and arc[1] >= arc[2]
-                    else "builds steadily to the end"
-                    if arc[2] >= arc[1] >= arc[0]
-                    else "starts strong and eases off")
+        # The mean arc still describes the vein's most common shape, and the
+        # seed caption needs one concrete phrase. What must NOT happen is this
+        # phrase becoming the only shape the vein can generate — the mean of
+        # many tracks is mid-peak almost regardless of input, so a vein that
+        # is 62/25/13 would otherwise produce 100% mid-peak. The distribution
+        # rides along in the envelope, and the sampler rolls against it.
+        shapes = v.get("energy_shapes") or {}
+        arc_desc = ARC_PHRASES[
+            max(shapes, key=shapes.get) if shapes else dominant_shape(v)]
         artists = ", ".join(a for a, _ in v["top_artists"][:4])
         excerpt = ""
         for t in v["central_tracks"]:
@@ -343,14 +362,19 @@ def auto_cards():
                 "spectral": f"~{v['centroid_hz_median']:.0f} Hz centroid",
                 "onset_per_s": v["onset_per_s_median"],
                 "energy_arc": arc_desc,
+                "energy_shapes": shapes,
                 "keys": ", ".join(k for k, _ in v["top_keys"]),
                 "length_s": [max(60, v["duration_median_s"] * 0.7),
                              min(300, v["duration_median_s"] * 1.3)],
             },
             "vocals": vocals,
+            # energy shape belongs here, not in fixed_core: it is the axis that
+            # most makes one take feel unlike the last, and the vein's own
+            # tracks disagree about it anyway.
             "mutation_axes": ["lead instrument or texture", "tempo within envelope",
-                              "arrangement density", "percussion character"],
-            "fixed_core": ["the vein's overall mood and energy shape"],
+                              "arrangement density", "percussion character",
+                              "where the energy peaks across the piece"],
+            "fixed_core": ["the vein's overall mood and character"],
             "caption_seed": (
                 f"Global Metadata: {sentence(desc) + ' ' if desc else ''}"
                 f"An instrumental piece that {arc_desc}, "
