@@ -35,8 +35,10 @@
     text-shadow: 0 0 8px var(--cyan), 0 0 28px #00e5ff70;
   }
   h1 .inf { color: var(--pink); text-shadow: 0 0 10px var(--pink), 0 0 30px #ff2d9580; }
+  /* stretch, not start: both chassis panels run to the taller one's height,
+     so the deck reads as two units of one rack rather than two loose cards */
   #layout { display: grid; grid-template-columns: minmax(0,600px) minmax(0,380px);
-            gap: 1.3rem; justify-content: center; align-items: start; }
+            gap: 1.3rem; justify-content: center; align-items: stretch; }
   @media (max-width: 1020px) { #layout { grid-template-columns: minmax(0,600px); } }
 
   .panel {
