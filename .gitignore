@@ -1,5 +1,10 @@
 venv/
-library/
+# library/* not library/: an ignored DIRECTORY is never descended into, so a
+# !library/.gitkeep negation inside it can never match. Ignoring the contents
+# instead lets the placeholder through, and the install docs tell people to
+# put music in a folder that therefore survives a clone.
+library/*
+!library/.gitkeep
 stations/
 radio/tank/
 radio/keepers/

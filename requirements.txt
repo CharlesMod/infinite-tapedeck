@@ -13,11 +13,15 @@ av>=11                 # container probing for the inventory stage
 scikit-learn>=1.3      # HDBSCAN/k-means clustering into taste veins
 transformers>=4.40     # CLAP embeddings and the critic (5.15.0 verified)
 
+# The AI listening pass (Music Flamingo, 8-bit). Not optional in practice:
+# without captions a station is described to the generator only by numbers,
+# which is the single biggest quality difference in the system. These are
+# CUDA-only wheels, which is no extra constraint — the whole app needs an
+# NVIDIA card anyway. The model itself downloads on first use, not now.
+bitsandbytes>=0.43
+accelerate>=0.30
+
 # torch is intentionally NOT pinned here: install the build that matches your
 # CUDA version from https://pytorch.org, or let ComfyUI's own requirements
 # bring it. A CPU-only torch works for analysis but cannot generate.
 # torch>=2.2
-
-# Optional — only for the AI listening pass (--with-captions):
-# bitsandbytes>=0.43
-# accelerate>=0.30

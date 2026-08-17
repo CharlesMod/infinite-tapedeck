@@ -8,8 +8,8 @@ Usage: venv/bin/python analysis/embed.py [library_dir] [out_dir]
 import hashlib
 import json
 import os
+import subprocess
 import sys
-import time
 import urllib.request
 
 import librosa
@@ -47,14 +47,50 @@ def gpus_busy():
     return False
 
 
+CLAP_VRAM_MB = 2500  # headroom the model plus a 10-s window needs
+
+
+def free_vram_mb():
+    """Free VRAM per nvidia-smi, or None if it cannot be determined."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5).stdout.strip()
+        return int(out.splitlines()[0])
+    except Exception:
+        return None
+
+
 def pick_device():
-    # the PAUSE flag means the captioner (or Dean) owns the card outside
+    # the PAUSE flag means the captioner (or the user) owns the card outside
     # the ComfyUI queues — CPU is slower but never collides
     if os.path.exists(f"{BASE}/radio/PAUSE"):
         return "cpu"
-    if torch.cuda.is_available() and not gpus_busy():
-        return "cuda"
-    return "cpu"
+    if not torch.cuda.is_available() or gpus_busy():
+        return "cpu"
+    # An idle queue is NOT an idle card: ComfyUI keeps model weights resident
+    # between jobs, so the queue can read empty while 13 GB is still held.
+    # Loading CLAP into that used to OOM and take the whole capture with it.
+    free = free_vram_mb()
+    if free is not None and free < CLAP_VRAM_MB:
+        print(f"only {free} MB VRAM free — embedding on CPU", flush=True)
+        return "cpu"
+    return "cuda"
+
+
+def load_model(device):
+    """CPU is always a valid answer: slower, but it finishes. A capture must
+    never die because something else was holding the card."""
+    try:
+        return ClapModel.from_pretrained(MODEL).to(device).eval(), device
+    except Exception as e:
+        if device != "cuda":
+            raise
+        print(f"CLAP failed to load on GPU ({e!r:.90}) — falling back to CPU",
+              flush=True)
+        torch.cuda.empty_cache()
+        return ClapModel.from_pretrained(MODEL).to("cpu").eval(), "cpu"
 
 
 def main():
@@ -78,7 +114,7 @@ def main():
 
     device = pick_device()
     print(f"device: {device}", flush=True)
-    model = ClapModel.from_pretrained(MODEL).to(device).eval()
+    model, device = load_model(device)
     processor = ClapProcessor.from_pretrained(MODEL)
 
     failures = []

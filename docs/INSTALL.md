@@ -93,8 +93,9 @@ Into the **same** interpreter, not a new venv:
 $COMFY_PY -m pip install -r requirements.txt
 ```
 
-That is librosa, soundfile, av, scikit-learn and transformers. ComfyUI
-already supplies torch and numpy.
+That is librosa, soundfile, av, scikit-learn and transformers, plus
+bitsandbytes and accelerate for the AI listening pass. ComfyUI already
+supplies torch and numpy.
 
 ## 5. Check the install before it does an hour of work
 
@@ -123,7 +124,6 @@ or changed files.
 ### Strongly recommended: the AI listening pass
 
 ```bash
-$COMFY_PY -m pip install bitsandbytes accelerate
 $COMFY_PY analysis/import_pipeline.py --station full-library --with-captions
 ```
 
