@@ -35,7 +35,18 @@ OUT = f"{BASE}/analysis/captions.jsonl"
 if "--out" in sys.argv:
     OUT = sys.argv[sys.argv.index("--out") + 1]
 PAUSE_FLAG = f"{BASE}/radio/PAUSE"
-M3 = "http://127.0.0.1:8189"
+# Flamingo wants ~11 GB, so the pass must not start while a generation is in
+# flight. Check the configured generator plus the conventional ports — a host
+# that is down simply reports nothing, and guessing wrong here silently
+# removes the collision guard.
+SERVERS = ["http://127.0.0.1:8188", "http://127.0.0.1:8189"]
+try:
+    with open(f"{BASE}/radio/config.json") as _f:
+        _host = json.load(_f).get("comfy_host")
+    if _host and _host not in SERVERS:
+        SERVERS.insert(0, _host)
+except (OSError, ValueError):
+    pass
 MODEL = "nvidia/music-flamingo-2601-hf"
 EXTS = (".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav")
 MAX_INPUT_S = 360  # >6 min tracks: middle 6 minutes is the representative cut
@@ -61,12 +72,15 @@ def content_hash(path):
 
 
 def queue_busy():
-    try:
-        req = urllib.request.urlopen(M3 + "/queue", timeout=5)
-        q = json.load(req)
-        return bool(q.get("queue_running")) or bool(q.get("queue_pending"))
-    except Exception:
-        return False
+    for host in SERVERS:
+        try:
+            req = urllib.request.urlopen(host + "/queue", timeout=5)
+            q = json.load(req)
+            if q.get("queue_running") or q.get("queue_pending"):
+                return True
+        except Exception:
+            continue  # server down = not busy
+    return False
 
 
 def main():

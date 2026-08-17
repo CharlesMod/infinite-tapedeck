@@ -1,0 +1,23 @@
+# The listener stack: analysis, the CLAP critic, the tank daemon.
+#
+# Install these into the SAME environment that runs ComfyUI (see
+# docs/INSTALL.md). ComfyUI already brings torch, numpy and transformers;
+# the rest is what tapedeck adds on top.
+#
+# Verified together on Python 3.12 / CUDA 13 / RTX 5080; the pins are floors,
+# not ceilings.
+
+librosa>=0.10          # tempo, key, spectral features (1.0.0 verified)
+soundfile>=0.12        # audio I/O; libsndfile reads flac/mp3/ogg/wav natively
+av>=11                 # container probing for the inventory stage
+scikit-learn>=1.3      # HDBSCAN/k-means clustering into taste veins
+transformers>=4.40     # CLAP embeddings and the critic (5.15.0 verified)
+
+# torch is intentionally NOT pinned here: install the build that matches your
+# CUDA version from https://pytorch.org, or let ComfyUI's own requirements
+# bring it. A CPU-only torch works for analysis but cannot generate.
+# torch>=2.2
+
+# Optional — only for the AI listening pass (--with-captions):
+# bitsandbytes>=0.43
+# accelerate>=0.30

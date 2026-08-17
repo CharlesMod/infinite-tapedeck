@@ -122,6 +122,13 @@ def main():
             if i % 25 == 0:
                 print(f"[{i}/{len(todo)}] ok={ok} skip={skip} fail={fail}", flush=True)
     print(f"done: ok={ok} skip={skip} fail={fail}", flush=True)
+    if fail and not ok and not skip:
+        # Nothing analyzed and nothing cached: clustering would later fail on
+        # an empty features.jsonl, far from the actual cause (see FAIL lines).
+        print("FEATURES FAILED: every track failed to analyze. librosa needs "
+              "ffmpeg on PATH to decode mp3/m4a/opus; run "
+              "analysis/preflight.py to check the environment.", flush=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

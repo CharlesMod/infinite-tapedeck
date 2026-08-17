@@ -81,6 +81,7 @@ def main():
     model = ClapModel.from_pretrained(MODEL).to(device).eval()
     processor = ClapProcessor.from_pretrained(MODEL)
 
+    failures = []
     for i, rel in enumerate(todo, 1):
         # politeness: if a generation started, hop off the card
         if device == "cuda" and i % 5 == 0 and gpus_busy():
@@ -111,6 +112,7 @@ def main():
                     json.dump(index, f, indent=1)
                 print(f"[{i}/{len(todo)}]", flush=True)
         except Exception as e:
+            failures.append((rel, repr(e)[:200]))
             print(f"FAIL {rel}: {e!r:.100}", flush=True)
         print(f"PROG {i} {len(todo)} {rel}", flush=True)
 
@@ -119,6 +121,26 @@ def main():
 
     # pooled matrix, aligned to sorted index keys
     keys = sorted(index.keys())
+    if not keys:
+        # Every track failed. Left alone this used to surface three lines
+        # later as "ValueError: need at least one array to stack", which
+        # tells the user nothing — the real news is the first failure.
+        print(f"\nEMBEDDING FAILED: 0 of {len(todo)} tracks embedded.",
+              flush=True)
+        if failures:
+            print(f"first failure: {failures[0][0]}\n  {failures[0][1]}",
+                  flush=True)
+            print("\nA failure on every track is usually one of:\n"
+                  "  - audio decoding: librosa needs ffmpeg on PATH for mp3/"
+                  "m4a/opus\n"
+                  "  - a partial install: torch, transformers and librosa "
+                  "must live in\n"
+                  "    the SAME interpreter that runs this script\n"
+                  "  - the CLAP weights failed to download (needs network on "
+                  "first run)\n"
+                  "Run analysis/preflight.py to check all of the above.",
+                  flush=True)
+        sys.exit(1)
     mat = []
     for k in keys:
         fname = index[k].get("file", k.replace(os.sep, "__") + ".npy")

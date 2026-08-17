@@ -51,6 +51,19 @@ def main():
             else:
                 other += 1
 
+    if not tracks:
+        # First stage of the capture: catching an empty or wrong folder here
+        # saves the user three stages of increasingly cryptic failures.
+        print(f"NO AUDIO FOUND under {LIBRARY}", flush=True)
+        if failures:
+            print(f"({len(failures)} file(s) matched an audio extension but "
+                  f"would not decode — first: {failures[0]['path']}: "
+                  f"{failures[0]['error']})", flush=True)
+        print(f"Put music there (or point the station at another folder) and "
+              f"re-run.\nRecognized extensions: {', '.join(AUDIO_EXTS)}",
+              flush=True)
+        sys.exit(1)
+
     durs = [t["duration_s"] for t in tracks.values() if t["duration_s"]]
     hours = sum(durs) / 3600
     # duration histogram in minutes

@@ -11,5 +11,7 @@ analysis/*.jsonl
 analysis/*.npy
 analysis/clap_windows/
 analysis/*.log
+analysis/description.txt
+comfyui_node/music_studio/tapedeck_base.txt
 __pycache__/
 *.pyc

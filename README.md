@@ -75,24 +75,43 @@ to the radio when the spool runs low and resumes once it rewinds.
 - Optional: any OpenAI-compatible local LLM endpoint (llama.cpp, llama-swap,
   Ollama) for caption variety and lyric writing — without one, the radio
   still runs on essence-card seeds
-- Optional: ~17 GB disk for Music Flamingo if you want AI captions
+- **Recommended**: ~17 GB disk for Music Flamingo, which listens to your
+  library and writes what it hears. Without it a station is described to the
+  generator only by numbers (tempo, brightness, energy) — no genre, no
+  instruments — and takes drift off-style. On a small library the pass costs
+  about 15 s per track.
 
 See **[docs/INSTALL.md](docs/INSTALL.md)** for the full walkthrough.
 
 ## Quickstart
 
+TAPEDECK has **no virtualenv of its own** — it is a ComfyUI custom node, and
+everything runs in the interpreter that runs ComfyUI. Below, that interpreter
+is `$COMFY_PY`. Full walkthrough in **[docs/INSTALL.md](docs/INSTALL.md)**.
+
 ```bash
-git clone <this repo> tapedeck && cd tapedeck
-# 1. install ComfyUI 0.33+ and Music 3 weights (docs/INSTALL.md)
-# 2. link the deck into ComfyUI
-ln -s "$PWD/comfyui_node/music_studio" /path/to/ComfyUI/custom_nodes/
+# 0. ComfyUI 0.33+ installed, Music 3 weights in place (docs/INSTALL.md 1-2)
+export COMFY_PY=/path/to/ComfyUI/venv/bin/python
+export COMFY_DIR=/path/to/ComfyUI
+
+# 1. clone anywhere, link the deck into ComfyUI
+git clone https://github.com/CharlesMod/infinite-tapedeck tapedeck && cd tapedeck
+ln -s "$PWD/comfyui_node/music_studio" "$COMFY_DIR/custom_nodes/"
 echo "$PWD" > comfyui_node/music_studio/tapedeck_base.txt
-# 3. put music in ./library (or point a station anywhere later)
-# 4. capture it
-python analysis/import_pipeline.py --station full-library
-# 5. run the spool daemon + open the deck
-python radio/tank_daemon.py &
-# http://<host>:8188/extensions/music_studio/index.html — press PLAY
+
+# 2. dependencies into that SAME interpreter
+$COMFY_PY -m pip install -r requirements.txt
+
+# 3. check the install before it does an hour of work
+$COMFY_PY analysis/preflight.py
+
+# 4. put music in ./library, then capture it
+#    --with-captions is strongly recommended, especially for small libraries
+$COMFY_PY analysis/import_pipeline.py --station full-library --with-captions
+
+# 5. run the spool daemon, open the deck, press PLAY
+$COMFY_PY radio/tank_daemon.py &
+# http://<host>:8188/extensions/music_studio/index.html
 ```
 
 ## FAQ
@@ -106,6 +125,21 @@ plays an infinite station you never have to prompt.
 embeddings, optional text descriptions) to steer generation toward a *style
 region* — captions never name artists, and the critic compares statistical
 audio embeddings, not waveforms.
+
+**How close does it actually get?** It converges on a style region, not a
+sound-alike. MiniMax Music 3 is conditioned on *text*: TAPEDECK's listener
+stack turns your library into words to steer generation, then uses audio
+embeddings to reject takes that miss. Nothing in the open-weights world today
+accepts your audio as a conditioning signal, so "in the neighborhood, endlessly"
+is the honest ceiling. Run the AI listening pass — the difference between a
+station described in prose and one described in BPM numbers is large.
+
+**It rejects everything / the spool never fills.** Usually a very tight
+library (one artist, one album): its own calibrated bar sits higher than
+generated audio can reach. The critic notices after four takes and switches
+to a bar learned from what that vein actually produces — the daemon log says
+`corpus 0.9xx out of reach`. Raise `critic_keep_frac` in `radio/config.json`
+to make it less picky still.
 
 **Why local?** Your library is personal. Your taste model doubly so. And a
 16 GB GPU that games at night can be a radio station by day.

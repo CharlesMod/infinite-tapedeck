@@ -718,6 +718,72 @@ def load_critic(analysis):
     return crit
 
 
+# Corpus P10 asks "where does the fringe of my own music sit?" — the right
+# anchor for a broad corpus, the wrong one for a tight corpus. A one-artist
+# library is so self-similar that its P10 lands around 0.93, and generated
+# audio never embeds that close to a corpus centroid, so every take is
+# rejected forever and the radio plays nothing. (Relief cannot save it:
+# 0.05 of easing against a 0.25 gap, snapped back on every accept.)
+#
+# So the bar is ALSO ranked against what the vein actually generates — keep
+# the better half of its own output. The lower of the two bars wins, floored
+# so a vein that generates uniformly badly still cannot bank noise. This can
+# only ease the corpus bar, never raise it: where the corpus bar is already
+# reachable, the critic behaves exactly as it did before.
+CRITIC_WINDOW = 60      # generated scores remembered per vein
+CRITIC_MIN_SAMPLES = 4  # scores before the learned bar is trusted
+CRITIC_KEEP_FRAC = float(_cfg.get("critic_keep_frac", 0.5))
+CRITIC_FLOOR = float(_cfg.get("critic_floor", 0.45))
+
+
+def load_scores(analysis):
+    """Generated-score history per vein, persisted so a restart does not
+    replay the calibration window."""
+    try:
+        with open(f"{analysis}/critic_scores.json") as f:
+            raw = json.load(f)
+        return {v: [float(x) for x in s][-CRITIC_WINDOW:]
+                for v, s in raw.items()}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def save_scores(analysis, scores):
+    path = f"{analysis}/critic_scores.json"
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({v: [round(x, 4) for x in s]
+                       for v, s in scores.items()}, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def record_score(scores, vein, score):
+    h = scores.setdefault(vein, [])
+    h.append(float(score))
+    del h[:-CRITIC_WINDOW]
+
+
+def critic_bar(vein, critic, scores):
+    """The bar this take must clear, and the reason, for the log."""
+    import numpy as np
+    corpus = critic[vein]["threshold"]
+    hist = scores.get(vein, [])
+    if CRITIC_KEEP_FRAC <= 0:  # opt out: corpus bar only, as it was
+        return corpus, f"corpus {corpus:.3f}"
+    if len(hist) < CRITIC_MIN_SAMPLES:
+        return corpus, (f"corpus {corpus:.3f}, calibrating "
+                        f"{len(hist)}/{CRITIC_MIN_SAMPLES}")
+    learned = max(CRITIC_FLOOR,
+                  float(np.percentile(hist, 100 * (1.0 - CRITIC_KEEP_FRAC))))
+    if learned >= corpus:
+        return corpus, f"corpus {corpus:.3f}"
+    return learned, (f"learned {learned:.3f} from {len(hist)} takes, "
+                     f"corpus {corpus:.3f} out of reach")
+
+
 # --------------------------------------------------------------- generation
 
 def build_graph(caption, lyrics, seed, max_duration, steps=None):
@@ -909,7 +975,7 @@ def load_station(slug, cache):
         return None
     for d in (p["tank"], p["keepers"]):
         os.makedirs(d, exist_ok=True)
-    cache[slug] = (p, cards, critic)
+    cache[slug] = (p, cards, critic, load_scores(p["analysis"]))
     return cache[slug]
 
 
@@ -928,10 +994,13 @@ def main():
             log(f"station '{slug}' has no capture yet — holding")
             time.sleep(LOOP_SLEEP)
             continue
-        p, cards, critic = loaded
+        p, cards, critic, scores = loaded
         if slug != last_slug:
             log(f"station: {slug} ({len(cards)} vein(s)), "
                 f"target {TANK_TARGET_TRACKS} takes, steps {STEPS}")
+            log("critic bars — " + ", ".join(
+                f"{v}: {critic_bar(v, critic, scores)[1]}"
+                for v in sorted(cards) if v in critic))
             last_slug = slug
             bundles, other_bundles = load_bundle_queue(slug)
             if bundles:
@@ -1087,8 +1156,12 @@ def main():
 
             v = clap_embed(path)
             score = float(v @ critic[vein]["centroid"])
-            thr_base = critic[vein]["threshold"]
+            thr_base, why = critic_bar(vein, critic, scores)
             thr = thr_base - _relief.get(vein, 0.0)
+            # every scored take teaches the bar, accepted or not — a fixed
+            # quantile of the vein's own output is what keeps it stable
+            record_score(scores, vein, score)
+            save_scores(p["analysis"], scores)
             if score >= thr:
                 track_id = f"{int(time.time())}_{seed}"
                 dest = os.path.join(p["tank"], f"v{vein}__{track_id}.mp3")
@@ -1115,7 +1188,7 @@ def main():
                 _relief[vein] = min(RELIEF_MAX,
                                     _relief.get(vein, 0.0) + RELIEF_STEP)
                 log(f"REJECT {card['name']} {dur:.0f}s score {score:.3f} "
-                    f"< thr {thr:.3f} — bar eases to "
+                    f"< thr {thr:.3f} [{why}] — bar eases to "
                     f"{thr_base - _relief[vein]:.3f}, vein cools {COOLDOWN_S}s")
         except Exception as e:
             # Failure class: one corrupt output (undecodable mp3, CLAP

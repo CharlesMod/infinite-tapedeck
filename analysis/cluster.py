@@ -30,14 +30,22 @@ SINGLE_VEIN_BELOW = 24
 
 
 def load():
-    emb = np.load(os.path.join(A, "embeddings.npy"))
-    with open(os.path.join(A, "embeddings_keys.json")) as f:
-        keys = json.load(f)
+    try:
+        emb = np.load(os.path.join(A, "embeddings.npy"))
+        with open(os.path.join(A, "embeddings_keys.json")) as f:
+            keys = json.load(f)
+    except FileNotFoundError as e:
+        sys.exit(f"missing {os.path.basename(e.filename)} — the embeddings "
+                 f"stage did not finish; re-run the capture.")
     feats = {}
-    with open(os.path.join(A, "features.jsonl")) as f:
-        for line in f:
-            rec = json.loads(line)
-            feats[rec["path"]] = rec
+    try:
+        with open(os.path.join(A, "features.jsonl")) as f:
+            for line in f:
+                rec = json.loads(line)
+                feats[rec["path"]] = rec
+    except FileNotFoundError:
+        sys.exit("missing features.jsonl — the features stage did not "
+                 "finish; re-run the capture.")
     return emb, keys, feats
 
 
@@ -51,8 +59,14 @@ def cluster(emb):
         return (np.zeros(emb.shape[0], dtype=int),
                 f"single-vein ({emb.shape[0]} tracks — the folder is the mood)")
 
-    from sklearn.cluster import HDBSCAN, KMeans
-    from sklearn.metrics import silhouette_score
+    try:
+        from sklearn.cluster import HDBSCAN, KMeans
+        from sklearn.metrics import silhouette_score
+    except ImportError:
+        sys.exit(f"scikit-learn is required to cluster {emb.shape[0]} tracks "
+                 "into veins (libraries under "
+                 f"{SINGLE_VEIN_BELOW} tracks skip clustering and do not "
+                 "need it).\n  pip install scikit-learn")
 
     h = HDBSCAN(min_cluster_size=10, min_samples=5, metric="euclidean")
     labels = h.fit_predict(emb)
@@ -87,7 +101,11 @@ def vein_stats(idx, keys, feats, emb, labels, label):
     dur = [f["duration_s"] for f in fs]
     keys_c = Counter(f["key"] for f in fs).most_common(4)
     thirds = np.array([f["energy_thirds"] for f in fs])
-    artists = Counter(k.split(os.sep)[0] for k in ranked).most_common(6)
+    # only a real directory component names an artist. A flat folder of
+    # loose files would otherwise report filenames as "artists", and those
+    # get quoted verbatim into generation prompts.
+    artists = Counter(k.split(os.sep)[0] for k in ranked
+                      if os.sep in k).most_common(6)
     lrc = sum(1 for k in ranked if has_lyrics(k))
 
     return {
@@ -110,16 +128,27 @@ def vein_stats(idx, keys, feats, emb, labels, label):
 def main():
     emb, keys, feats = load()
     assert emb.shape[0] == len(keys), "embeddings/keys misaligned"
-    # tracks Dean voted off the station: analyzed, but not part of its essence
+    # tracks voted off the station: analyzed, but not part of its essence
     ex_path = os.path.join(A, "excluded.json")
+    excluded = set()
     if os.path.exists(ex_path):
         with open(ex_path) as f:
             excluded = set(json.load(f))
-        mask = [i for i, k in enumerate(keys) if k not in excluded]
-        if len(mask) != len(keys):
-            print(f"excluding {len(keys) - len(mask)} track(s) from the essence")
-            emb = emb[mask]
-            keys = [keys[i] for i in mask]
+    # a track needs BOTH an embedding and a feature row to describe a vein;
+    # one stage failing on a file must not poison the stats with NaNs
+    mask = [i for i, k in enumerate(keys)
+            if k not in excluded and k in feats]
+    if len(mask) != len(keys):
+        dropped = len(keys) - len(mask)
+        no_feats = sum(1 for k in keys if k not in feats and k not in excluded)
+        print(f"using {len(mask)}/{len(keys)} tracks "
+              f"({dropped} dropped: {len(excluded & set(keys))} excluded, "
+              f"{no_feats} missing features)")
+        emb = emb[mask]
+        keys = [keys[i] for i in mask]
+    if not keys:
+        sys.exit("no tracks left to cluster — every track was excluded or "
+                 "missing features. Re-run the capture.")
     labels, method = cluster(emb)
     print("method:", method)
 
