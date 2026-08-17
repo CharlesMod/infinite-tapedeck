@@ -153,6 +153,8 @@ def total_vram_mb():
 
 
 CONTEXT_MB = 500  # roughly what ComfyUI needs just to create a CUDA context
+# set by systemd/wait-for-vram.sh while the music server is trying to start
+WANT_CARD = f"{BASE}/radio/WANT_CARD"
 
 
 def free_the_card():
@@ -289,17 +291,19 @@ def main():
                     print(f"YIELD tank at {level:.0f}s < {YIELD_BELOW_S:.0f}s "
                           "— handing the GPU back to generation", flush=True)
                     sys.exit(4)
-            # The allocator keeps freed blocks, which nvidia-smi still counts
-            # as used, so the card looks full even when this pass is between
-            # tracks. Handing them back is what lets the music server create
-            # a CUDA context without this pass giving up the model.
-            if i % 3 == 0:
-                free_now = free_vram_mb()
-                if free_now is not None and free_now < VRAM_HEADROOM_MB:
-                    torch.cuda.empty_cache()
-                    after = free_vram_mb()
-                    print(f"released cache — free VRAM {free_now} MB -> "
-                          f"{after} MB", flush=True)
+            # Release on demand, never on a timer. A/B measured on this
+            # library: releasing every third track costs 48s per track
+            # against 40s without, because the allocator hands blocks back
+            # and re-acquires them from the driver each time — and it buys
+            # only ~200 MB, nowhere near a CUDA context. But when the music
+            # server actually wants to start it needs that window, and
+            # waiting for one to appear by luck left the deck down for the
+            # rest of a 33-minute dub. So it asks (systemd/wait-for-vram.sh
+            # sets the flag) and we answer at the next track boundary.
+            if os.path.exists(WANT_CARD):
+                torch.cuda.empty_cache()
+                print(f"WANT_CARD — released cache, free VRAM now "
+                      f"{free_vram_mb()} MB", flush=True)
             path = os.path.join(LIB, rel)
             with open(breadcrumb, "w") as f:
                 f.write(rel)

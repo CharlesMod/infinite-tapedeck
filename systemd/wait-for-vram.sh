@@ -20,6 +20,16 @@ TIMEOUT=${2:-0}
 INTERVAL=10
 waited=0
 
+# Ask, rather than wait for luck. The listening pass checks this flag at each
+# track boundary and releases its allocator cache once when it is set, which
+# opens a multi-GB window within one track (~40s) instead of leaving the deck
+# down for the rest of the dub. Removed on every exit path, so a pass never
+# keeps paying for a server that already started or gave up.
+BASE=${TAPEDECK_BASE:-$(cd "$(dirname "$0")/.." && pwd)}
+WANT="$BASE/radio/WANT_CARD"
+cleanup() { rm -f "$WANT" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
 free_mb() {
     nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null \
         | head -1 | tr -d ' '
@@ -42,7 +52,9 @@ while :; do
         exit 0
     fi
     if [ "$waited" = 0 ]; then
-        echo "wait-for-vram: only ${free} MB free, need ${NEED_MB} — waiting for the GPU"
+        echo "wait-for-vram: only ${free} MB free, need ${NEED_MB} — asking the listening pass to make room"
+        mkdir -p "$(dirname "$WANT")" 2>/dev/null || true
+        : > "$WANT" 2>/dev/null || true
     fi
     sleep "$INTERVAL"
     waited=$((waited + INTERVAL))

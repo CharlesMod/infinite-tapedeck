@@ -239,6 +239,17 @@ log — it narrates every decision.
 Systemd templates for ComfyUI, the daemon, and an idle-VRAM watchdog are in
 `systemd/`. Edit the paths in each, then `systemctl --user enable --now` them.
 
+The ComfyUI template runs `systemd/wait-for-vram.sh` before starting, and it
+earns its place: the listening pass legitimately fills the card, and ComfyUI
+cannot create a CUDA context when it is full — it exits before it can serve
+anything, and systemd then crash-loops it (19 restarts in one measured case,
+each loading torch and stealing CPU from the dub it was waiting on). With the
+script it waits instead, and asks: it raises `radio/WANT_CARD`, the listening
+pass sees that at its next track boundary and releases its allocator cache,
+which measured 1.6 GB free before and 3.1 GB after — so the deck comes back
+within one track instead of at the end of the dub. The flag is removed on
+every exit path, so nothing keeps paying for a server that already started.
+
 ---
 
 ## Troubleshooting

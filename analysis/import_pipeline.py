@@ -129,9 +129,14 @@ PROBLEM_KEYS = ("FAIL", "UNDECODABLE", "Traceback", "NOT ENOUGH", "POISON",
 
 
 def raw(line):
-    """Full detail, for bug reports. Never pretty, never truncated."""
+    """Full detail, for bug reports. Never pretty, never truncated.
+
+    Flushed per line on purpose: the moment you most want this file is while
+    a capture is still running — a stage that looks hung, a pass quietly
+    failing every track — and a buffered log is empty exactly then."""
     if _logf:
         _logf.write(line + "\n")
+        _logf.flush()
 
 
 def is_repeat_noise(line):
