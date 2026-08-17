@@ -208,6 +208,12 @@ Re-run the capture after either — cards are rebuilt from what is on disk.
   much less picky, `0.0` disables the learned bar entirely and uses only the
   corpus bar. `critic_floor` (default `0.45`) is the absolute similarity
   below which a take is never banked, whatever the learned bar says.
+- `caption_vram_headroom_mb` (default `1400`): VRAM the listening pass always
+  leaves free. Without it Flamingo grows into the last byte of the card and
+  ComfyUI can no longer start at all — it needs a few hundred MB just to
+  create a CUDA context, so systemd crash-loops it until the pass ends. Raise
+  this if you run anything else on the GPU during a dub; lower it only if the
+  pass is offloading to CPU and crawling.
 - Also accepted: `min_take_s`, `lyric_cap`, `bundle_queue_target`,
   `tank_target_tracks`, `relief_step`, `relief_max`, `dit_model`.
 
