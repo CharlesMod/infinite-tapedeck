@@ -211,6 +211,32 @@
   .rail-h { font-size: .66rem; letter-spacing: .3em; text-transform: uppercase;
             color: var(--cyan); text-shadow: 0 0 8px #00e5ff70; margin-bottom: .6rem; }
   .rail-sec { margin-bottom: 1.3rem; }
+
+  /* ---------------- critic ---------------- */
+  #cr-bias-row { display: flex; align-items: center; gap: .4rem;
+                 margin-bottom: .4rem; }
+  .cr-btn { flex: 0 0 auto; padding: .18rem .4rem; font-size: .58rem; }
+  .cr-btn:disabled { opacity: .35; cursor: default; }
+  #cr-bias { flex: 1; text-align: center; font-size: .62rem;
+             letter-spacing: .1em; text-transform: uppercase;
+             color: var(--vfd); }
+  #cr-hint { font-size: .58rem; color: var(--dim); line-height: 1.5;
+             margin-bottom: .45rem; }
+  #cr-list { display: flex; flex-direction: column; gap: 1px;
+             max-height: 132px; overflow-y: auto; }
+  .cr-row { display: flex; align-items: center; gap: .4rem;
+            font-size: .58rem; padding: .12rem .3rem; border-radius: 3px;
+            background: #ffffff05; }
+  .cr-row.ok { color: var(--vfd); }
+  .cr-row.no { color: #8a7fa8; }
+  .cr-row .cr-mark { flex: 0 0 auto; width: .7rem; }
+  .cr-row .cr-vein { flex: 1; overflow: hidden; white-space: nowrap;
+                     text-overflow: ellipsis; }
+  .cr-row .cr-sc { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+  /* a take that only just missed: the one worth telling the user about,
+     because one nudge of the bar would have banked it */
+  .cr-row.near { background: color-mix(in srgb, var(--amber) 14%, transparent); }
+  .cr-row.near .cr-sc { color: var(--amber); }
   select, input[type=text] {
     width: 100%; background: #0a0715; color: var(--vfd);
     border: 1px solid #2c2347; border-radius: 7px; padding: .5rem .7rem;
@@ -416,6 +442,22 @@
             style="background:var(--vfd)"></div></div>
           <span class="g-min" id="sys-press-n">—</span></div>
         <div id="deck-line">DECK · <span id="deck-msg">listening for the daemon…</span></div>
+      </div>
+
+      <div class="rail-sec">
+        <div class="rail-h">Critic
+          <span id="cr-rate" style="text-transform:none;letter-spacing:0;
+            color:var(--dim);float:right"></span>
+        </div>
+        <div id="cr-bias-row">
+          <button class="small-btn cr-btn" id="cr-down"
+            title="accept more takes — lower the bar">− looser</button>
+          <span id="cr-bias">standard</span>
+          <button class="small-btn cr-btn" id="cr-up"
+            title="accept fewer, closer takes — raise the bar">stricter +</button>
+        </div>
+        <div id="cr-hint"></div>
+        <div id="cr-list"></div>
       </div>
 
       <div class="rail-sec" style="margin-bottom:0">
@@ -943,9 +985,78 @@ loadSetlist();
 refreshGauge();
 pollCapture();
 pollGpu();
+// ------------------------------------------------------------------ critic
+// Rejected takes are deleted, so without this panel the deck looks like it is
+// working hard and producing nothing. Show the misses, and let the listener
+// move the bar rather than edit a config file.
+let crBiasMax = 0.15, crBiasStep = 0.02, crBias = 0;
+
+function crLabel(b) {
+  if (Math.abs(b) < 0.005) return "standard";
+  const steps = Math.round(Math.abs(b) / crBiasStep);
+  return (b > 0 ? "stricter " : "looser ") + "▮".repeat(Math.min(steps, 7));
+}
+
+async function pollCritic() {
+  let d;
+  try { d = await (await fetch("/music_studio/critic")).json(); }
+  catch { return; }
+  crBias = d.bias; crBiasMax = d.bias_max; crBiasStep = d.bias_step;
+  document.getElementById("cr-bias").textContent = crLabel(d.bias);
+  document.getElementById("cr-up").disabled = d.bias >= crBiasMax - 1e-9;
+  document.getElementById("cr-down").disabled = d.bias <= -crBiasMax + 1e-9;
+
+  const rate = document.getElementById("cr-rate");
+  rate.textContent = d.total ? `${d.accepted}/${d.total} kept` : "";
+
+  const hint = document.getElementById("cr-hint");
+  if (!d.total) {
+    hint.textContent = "No takes judged yet.";
+  } else if (d.accepted === 0) {
+    hint.textContent = "Nothing is clearing the bar — try looser.";
+  } else if (d.near_misses >= 3) {
+    hint.textContent = `${d.near_misses} takes missed by a hair; looser would bank them.`;
+  } else if (d.accepted === d.total && d.total >= 6) {
+    hint.textContent = "Everything is passing — stricter raises the standard.";
+  } else {
+    hint.textContent = "";
+  }
+
+  const list = document.getElementById("cr-list");
+  list.innerHTML = "";
+  for (const v of d.recent) {
+    const row = document.createElement("div");
+    const near = !v.ok && v.short != null && v.short <= 0.03;
+    row.className = "cr-row " + (v.ok ? "ok" : "no") + (near ? " near" : "");
+    const score = v.score == null ? `${v.dur}s stub`
+      : `${v.score.toFixed(3)} / ${v.thr.toFixed(3)}`;
+    row.innerHTML =
+      `<span class="cr-mark">${v.ok ? "✓" : "✕"}</span>` +
+      `<span class="cr-vein"></span><span class="cr-sc"></span>`;
+    row.querySelector(".cr-vein").textContent = v.vein_name || `Vein ${v.vein}`;
+    row.querySelector(".cr-sc").textContent = score;
+    row.title = v.why ? `${v.why}${near ? " — only just missed" : ""}` : "";
+    list.appendChild(row);
+  }
+}
+
+async function nudgeBar(delta) {
+  try {
+    await fetch("/music_studio/critic/bias", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delta }),
+    });
+  } catch {}
+  pollCritic();
+}
+document.getElementById("cr-up").onclick = () => nudgeBar(crBiasStep);
+document.getElementById("cr-down").onclick = () => nudgeBar(-crBiasStep);
+pollCritic();
+
 setInterval(refreshGauge, 30000);
 setInterval(pollCapture, 3000);
 setInterval(pollGpu, 2500);
+setInterval(pollCritic, 5000);
 </script>
 </body>
 </html>

@@ -786,22 +786,66 @@ def record_score(scores, vein, score):
     del h[:-CRITIC_WINDOW]
 
 
-def critic_bar(vein, critic, scores):
+VERDICT_KEEP = 24
+
+
+def publish_verdict(analysis, **v):
+    """The cutting-room floor, on disk for the deck to draw.
+
+    A rejected take is deleted, so without this the listener sees a radio
+    that is plainly working hard and has nothing to show for it — the most
+    common 'is it broken?' moment in the whole system."""
+    path = f"{analysis}/critic_recent.json"
+    try:
+        with open(path) as f:
+            recent = json.load(f)[-VERDICT_KEEP + 1:]
+    except (OSError, ValueError):
+        recent = []
+    recent.append({**v, "ts": int(time.time())})
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(recent, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+BIAS_MAX = 0.15  # how far the listener may move the bar, either way
+
+
+def bias_path(analysis):
+    return f"{analysis}/critic_bias.json"
+
+
+def load_bias(analysis):
+    """The listener's own thumb on the scale, read fresh every take so the
+    deck's stricter/looser buttons apply without a restart."""
+    try:
+        with open(bias_path(analysis)) as f:
+            return max(-BIAS_MAX, min(BIAS_MAX, float(json.load(f)["bias"])))
+    except (OSError, ValueError, TypeError, KeyError):
+        return 0.0
+
+
+def critic_bar(vein, critic, scores, bias=0.0):
     """The bar this take must clear, and the reason, for the log."""
     import numpy as np
     corpus = critic[vein]["threshold"]
     hist = scores.get(vein, [])
     if CRITIC_KEEP_FRAC <= 0:  # opt out: corpus bar only, as it was
-        return corpus, f"corpus {corpus:.3f}"
+        return corpus + bias, f"corpus {corpus:.3f}"
     if len(hist) < CRITIC_MIN_SAMPLES:
-        return corpus, (f"corpus {corpus:.3f}, calibrating "
-                        f"{len(hist)}/{CRITIC_MIN_SAMPLES}")
+        return corpus + bias, (f"corpus {corpus:.3f}, calibrating "
+                               f"{len(hist)}/{CRITIC_MIN_SAMPLES}")
     learned = max(CRITIC_FLOOR,
                   float(np.percentile(hist, 100 * (1.0 - CRITIC_KEEP_FRAC))))
-    if learned >= corpus:
-        return corpus, f"corpus {corpus:.3f}"
-    return learned, (f"learned {learned:.3f} from {len(hist)} takes, "
-                     f"corpus {corpus:.3f} out of reach")
+    base, why = ((corpus, f"corpus {corpus:.3f}") if learned >= corpus
+                 else (learned, f"learned {learned:.3f} from {len(hist)} "
+                                f"takes, corpus {corpus:.3f} out of reach"))
+    if bias:
+        why += f", you {'raised' if bias > 0 else 'lowered'} it by {abs(bias):.02f}"
+    return base + bias, why
 
 
 # --------------------------------------------------------------- generation
@@ -1019,7 +1063,7 @@ def main():
             log(f"station: {slug} ({len(cards)} vein(s)), "
                 f"target {TANK_TARGET_TRACKS} takes, steps {STEPS}")
             log("critic bars — " + ", ".join(
-                f"{v}: {critic_bar(v, critic, scores)[1]}"
+                f"{v}: {critic_bar(v, critic, scores, load_bias(p['analysis']))[1]}"
                 for v in sorted(cards) if v in critic))
             last_slug = slug
             bundles, other_bundles = load_bundle_queue(slug)
@@ -1168,6 +1212,10 @@ def main():
                 os.unlink(path)
                 cool_vein(vein)
                 record_verdict(vein, False, dur=dur)
+                publish_verdict(p["analysis"], vein=vein,
+                                vein_name=card["name"], ok=False,
+                                score=None, thr=None, dur=round(dur),
+                                why=f"stub — under the {MIN_TAKE_S}s floor")
                 log(f"REJECT-stub {card['name']} {dur:.0f}s "
                     f"(< {MIN_TAKE_S}s) — vein cools {COOLDOWN_S}s")
                 if ONESHOT:
@@ -1176,7 +1224,8 @@ def main():
 
             v = clap_embed(path)
             score = float(v @ critic[vein]["centroid"])
-            thr_base, why = critic_bar(vein, critic, scores)
+            bias = load_bias(p["analysis"])
+            thr_base, why = critic_bar(vein, critic, scores, bias)
             thr = thr_base - _relief.get(vein, 0.0)
             # every scored take teaches the bar, accepted or not — a fixed
             # quantile of the vein's own output is what keeps it stable
@@ -1198,6 +1247,10 @@ def main():
                     }) + "\n")
                 record_verdict(vein, True, dur=dur, score=score, thr=thr)
                 eased = _relief.pop(vein, 0.0)
+                publish_verdict(p["analysis"], vein=vein,
+                                vein_name=card["name"], ok=True,
+                                score=round(score, 3), thr=round(thr, 3),
+                                dur=round(dur), why=why)
                 log(f"ACCEPT {card['name']} {dur:.0f}s score {score:.3f} "
                     f"(thr {thr:.3f}) -> {os.path.basename(dest)}"
                     + (f" — bar restored to {thr_base:.3f}" if eased else ""))
@@ -1207,6 +1260,11 @@ def main():
                 record_verdict(vein, False, dur=dur, score=score, thr=thr)
                 _relief[vein] = min(RELIEF_MAX,
                                     _relief.get(vein, 0.0) + RELIEF_STEP)
+                publish_verdict(p["analysis"], vein=vein,
+                                vein_name=card["name"], ok=False,
+                                score=round(score, 3), thr=round(thr, 3),
+                                dur=round(dur), why=why,
+                                short=round(thr - score, 3))
                 log(f"REJECT {card['name']} {dur:.0f}s score {score:.3f} "
                     f"< thr {thr:.3f} [{why}] — bar eases to "
                     f"{thr_base - _relief[vein]:.3f}, vein cools {COOLDOWN_S}s")

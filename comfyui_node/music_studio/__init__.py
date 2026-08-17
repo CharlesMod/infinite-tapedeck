@@ -386,6 +386,75 @@ async def gpu(request):
         return web.json_response({"error": repr(e)[:80]}, status=503)
 
 
+BIAS_MAX = 0.15
+BIAS_STEP = 0.02
+
+
+def _bias_file(p):
+    return os.path.join(p["analysis"], "critic_bias.json")
+
+
+def _bias(p):
+    try:
+        with open(_bias_file(p)) as f:
+            return max(-BIAS_MAX, min(BIAS_MAX, float(json.load(f)["bias"])))
+    except (OSError, ValueError, TypeError, KeyError):
+        return 0.0
+
+
+@PromptServer.instance.routes.get("/music_studio/critic")
+async def critic(request):
+    """What the critic is doing right now: the bar, how the last takes did
+    against it, and where the listener has set it. A rejected take is
+    deleted, so this is the only evidence it ever existed."""
+    p = _p()
+    try:
+        with open(os.path.join(p["analysis"], "critic_recent.json")) as f:
+            recent = json.load(f)
+    except (OSError, ValueError):
+        recent = []
+    scored = [v for v in recent if v.get("score") is not None]
+    accepts = sum(1 for v in recent if v.get("ok"))
+    near = [v for v in scored if not v.get("ok")
+            and v.get("short") is not None and v["short"] <= 0.03]
+    return web.json_response({
+        "bias": round(_bias(p), 3),
+        "bias_max": BIAS_MAX,
+        "bias_step": BIAS_STEP,
+        "recent": recent[-14:][::-1],
+        "accepted": accepts,
+        "total": len(recent),
+        "near_misses": len(near),
+    })
+
+
+@PromptServer.instance.routes.post("/music_studio/critic/bias")
+async def critic_bias(request):
+    """Move the bar. Relative steps from the deck's buttons, or an absolute
+    value; the daemon re-reads this per take, so it applies immediately."""
+    data = await request.json()
+    p = _p()
+    cur = _bias(p)
+    try:
+        if "delta" in data:
+            new = cur + float(data["delta"])
+        elif "bias" in data:
+            new = float(data["bias"])
+        else:
+            return web.json_response({"error": "delta or bias required"},
+                                     status=400)
+    except (TypeError, ValueError):
+        return web.json_response({"error": "not a number"}, status=400)
+    new = round(max(-BIAS_MAX, min(BIAS_MAX, new)), 3)
+    os.makedirs(p["analysis"], exist_ok=True)
+    tmp = _bias_file(p) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"bias": new}, f)
+    os.replace(tmp, _bias_file(p))
+    return web.json_response({"ok": True, "bias": new,
+                              "at_limit": abs(new) >= BIAS_MAX})
+
+
 @PromptServer.instance.routes.get("/music_studio/stations")
 async def stations_list(request):
     return web.json_response({"stations": stations.listing(),
