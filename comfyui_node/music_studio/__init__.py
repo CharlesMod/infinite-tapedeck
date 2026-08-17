@@ -613,10 +613,27 @@ async def station_tracks(request):
 # -------------------------------------------------------------------- import
 
 def _pid_alive(pid):
+    """Is this pid still running?
+
+    os.kill(pid, 0) is the POSIX idiom, but on Windows os.kill() calls
+    TerminateProcess() for any signal other than CTRL_C_EVENT /
+    CTRL_BREAK_EVENT — the liveness probe would kill the thing it is
+    probing, and this one is polled by the deck every few seconds."""
     try:
-        os.kill(int(pid), 0)
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if os.name == "nt":
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
         return True
-    except (OSError, TypeError, ValueError):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
         return False
 
 

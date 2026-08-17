@@ -15,11 +15,32 @@ itself (3) → dependencies (4) → check (5) → capture (6) → run (7).
 
 ## 0. What you need
 
-- Linux, Python 3.10+ (3.12 verified), an NVIDIA GPU with **16 GB VRAM**
+- **Linux.** Python 3.10+ (3.12 verified), an NVIDIA GPU with **16 GB VRAM**
   (RTX 4080/5080 class)
 - ~15 GB disk for the Music 3 weights, plus room for generated audio
 - Optional: another ~17 GB if you want the AI listening pass (recommended —
   see step 6)
+
+### On Windows: use WSL2, not native Windows
+
+Native Windows is **not supported**, and it will not work if you try. The
+radio identifies who is holding the GPU by reading `/proc/<pid>/cmdline`,
+coordinates the captioner and the generator with POSIX signals, and asks
+systemd for unit PIDs — none of which exist on Windows. It is not a matter of
+path separators.
+
+WSL2 works and is the supported Windows route: it has CUDA passthrough to
+your NVIDIA card, a real `/proc`, and systemd (enable it with
+`systemd=true` under `[boot]` in `/etc/wsl.conf`). Install Ubuntu under WSL2,
+then follow this guide unchanged from inside it. Two notes:
+
+- Keep the repo and your music **inside** the Linux filesystem (`~/tapedeck`,
+  not `/mnt/c/...`). Analysis reads every file end to end, and the
+  `/mnt/c` bridge is slow enough to dominate the capture.
+- The deck is a web page, so open it in Windows' own browser at
+  `http://localhost:8188/...` — WSL2 forwards localhost automatically.
+
+macOS is not supported either: MiniMax Music 3 needs CUDA.
 
 ---
 

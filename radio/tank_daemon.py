@@ -139,6 +139,27 @@ def log(msg):
         pass
 
 
+def pid_alive(pid):
+    """POSIX probes liveness with signal 0; Windows os.kill() would call
+    TerminateProcess() instead and kill what it is asking about."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if os.name == "nt":
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def queue_busy(host):
     try:
         q = http_json(host + "/queue", timeout=5)
@@ -202,10 +223,9 @@ def hold_reason():
         # manual touch = sacred.
         try:
             pid = int(open(PAUSE_FLAG).read().strip())
-            try:
-                os.kill(pid, 0)
+            if pid_alive(pid):
                 return "PAUSE held by captioner"
-            except OSError:
+            else:
                 os.unlink(PAUSE_FLAG)
                 log("stale PAUSE from dead captioner — cleared, resuming")
         except (ValueError, OSError):

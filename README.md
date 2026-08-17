@@ -68,7 +68,10 @@ to the radio when the spool runs low and resumes once it rewinds.
 
 ## Requirements
 
-- Linux, Python 3.12, an NVIDIA GPU with **16 GB VRAM** (RTX 4080/5080 class)
+- **Linux** (Windows via WSL2 — see
+  [docs/INSTALL.md](docs/INSTALL.md); native Windows and macOS are not
+  supported), Python 3.12, an NVIDIA GPU with **16 GB VRAM** (RTX 4080/5080
+  class)
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI) **0.33+** with the
   MiniMax Music 3 model files (~14 GB, see
   [Comfy-Org/MiniMax-Music-3](https://huggingface.co/Comfy-Org/MiniMax-Music-3))

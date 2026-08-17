@@ -207,6 +207,27 @@ def _sigterm(*_):
 signal.signal(signal.SIGTERM, _sigterm)
 
 
+def pid_alive(pid):
+    """POSIX probes liveness with signal 0; Windows os.kill() would call
+    TerminateProcess() instead and kill what it is asking about."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if os.name == "nt":
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def other_captioner_running():
     """Someone else holds the PAUSE flag. The captioner writes its pid into
     the flag; a live pid = a running captioner. An unparseable flag is a
@@ -219,11 +240,9 @@ def other_captioner_running():
         pid = int(open(flag).read().strip())
     except (ValueError, OSError):
         return True
-    try:
-        os.kill(pid, 0)
-        return pid != os.getpid() and not _is_our_child(pid)
-    except OSError:
+    if not pid_alive(pid):
         return False
+    return pid != os.getpid() and not _is_our_child(pid)
 
 
 def _is_our_child(pid):
