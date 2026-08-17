@@ -461,6 +461,11 @@ async def station_scan(request):
                     analyzed.add(json.loads(line)["path"])
                 except Exception:
                     continue
+    captioned = 0
+    cpath = os.path.join(p["analysis"], "captions.jsonl")
+    if os.path.exists(cpath):
+        with open(cpath) as f:
+            captioned = sum(1 for line in f if line.strip())
     return web.json_response({
         "total": len(on_disk),
         "analyzed": len(on_disk & analyzed),
@@ -468,6 +473,7 @@ async def station_scan(request):
         "new_count": len(on_disk - analyzed),
         "removed_count": len(analyzed - on_disk),
         "excluded_count": len(_excluded(p)),
+        "captioned": captioned,
     })
 
 

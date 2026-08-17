@@ -33,22 +33,41 @@ PROGRESS = f"{SCRIPTS}/import_progress.json"
 sys.path.insert(0, f"{BASE}/radio")
 import stations  # noqa: E402
 
+USAGE = ("usage: import_pipeline.py --station SLUG [--with-captions] "
+         "[--describe TEXT] [--source DIR]")
+
+
+def opt(name):
+    """Value of --name, or None. A flag given without its value is a typo,
+    not a traceback."""
+    if name not in sys.argv:
+        return None
+    i = sys.argv.index(name) + 1
+    if i >= len(sys.argv) or sys.argv[i].startswith("--"):
+        print(f"{name} needs a value\n{USAGE}")
+        sys.exit(2)
+    return sys.argv[i]
+
+
 WITH_CAPTIONS = "--with-captions" in sys.argv
-DESCRIBE = (sys.argv[sys.argv.index("--describe") + 1]
-            if "--describe" in sys.argv else None)
-STATION = None
-if "--station" in sys.argv:
-    STATION = sys.argv[sys.argv.index("--station") + 1]
-elif "--source" in sys.argv:
+DESCRIBE = opt("--describe")
+STATION = opt("--station")
+if STATION is None and "--source" in sys.argv:
     STATION = stations.LEGACY_SLUG  # bare --source keeps the old behavior
 
 P = stations.paths(STATION) if STATION else None
 if not P:
-    print("usage: import_pipeline.py --station SLUG [--with-captions]")
+    print(USAGE)
     sys.exit(2)
-SRC = os.path.realpath(os.path.expanduser(
-    sys.argv[sys.argv.index("--source") + 1] if "--source" in sys.argv
-    else P["source"]))
+if not P["source"] and not opt("--source"):
+    # An unregistered slug resolves to an empty source, which realpath()
+    # helpfully turns into the current directory — a typo would capture
+    # whatever folder you happened to be standing in.
+    known = ", ".join(s["slug"] for s in stations.listing()) or "(none)"
+    print(f"unknown station: {STATION}\nknown stations: {known}\n"
+          "Create one from the deck UI, or name a folder with --source DIR.")
+    sys.exit(2)
+SRC = os.path.realpath(os.path.expanduser(opt("--source") or P["source"]))
 A = P["analysis"]
 if not os.path.isdir(SRC):
     print(f"source is not a directory: {SRC}")
@@ -327,6 +346,12 @@ def main():
         if offer_captions(n_audio):
             WITH_CAPTIONS = True
             _state["with_captions"] = True
+        else:
+            # one condensed line for the deck's capture log — the full block
+            # above only reaches whoever is watching a terminal
+            note(f"TIP: {n_audio} tracks — the listening pass would take "
+                 f"~{max(1, round(n_audio * CAPTION_S_PER_TRACK / 60))} min "
+                 "and is what makes takes sound like this station")
 
     active = [(n, c, w, t) for n, c, w, t in STAGES
               if n != "captions" or WITH_CAPTIONS]

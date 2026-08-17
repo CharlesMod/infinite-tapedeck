@@ -371,8 +371,10 @@
           <input type="text" id="ns-name" placeholder="Station name (the mood)">
           <input type="text" id="ns-path" placeholder="/path/to/folder/of/songs">
           <div class="row">
-            <input type="checkbox" id="ns-captions">
-            <label for="ns-captions">describe tracks with the listening model (slow)</label>
+            <input type="checkbox" id="ns-captions" checked>
+            <label for="ns-captions">listen to every track and describe it
+              — recommended, this is what makes generated songs match the
+              station (~15 s/track, resumable, yields to the radio)</label>
           </div>
           <button class="small-btn" id="ns-create">Create &amp; capture</button>
         </div>
@@ -719,10 +721,16 @@ $("sl-filter").oninput = renderSetlist;
 
 /* -------------------------------------------------- rescan + capture */
 
+let stationCaptioned = false;
+
 async function scan(quiet) {
   try {
     const r = await fetch("/music_studio/station/scan");
     const s = await r.json();
+    // a station that has captions keeps getting them: capturing newly
+    // dropped tracks without the listening pass would leave the station
+    // half described, and the essence cards drift toward the silent half
+    stationCaptioned = s.captioned > 0;
     const parts = [];
     if (s.new_count) parts.push(`${s.new_count} new`);
     if (s.removed_count) parts.push(`${s.removed_count} gone`);
@@ -743,7 +751,8 @@ $("sl-refresh").onclick = () => { loadSetlist(); scan(false); };
 $("sl-capture").onclick = async () => {
   const r = await fetch("/music_studio/import/start", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source: currentSource, with_captions: false }),
+    body: JSON.stringify({ source: currentSource,
+                           with_captions: stationCaptioned }),
   });
   const j = await r.json();
   toast(j.error ? j.error : "capturing changes");
