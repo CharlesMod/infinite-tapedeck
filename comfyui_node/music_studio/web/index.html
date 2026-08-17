@@ -114,10 +114,12 @@
   body.playing #tape-glow { opacity: .8; }
   .guide { fill: #0a0715; stroke: #3a2f60; stroke-width: 2; }
   #head rect { fill: #1b1530; stroke: #574a8a; stroke-width: 1.5; }
-  #spool-label { fill: var(--amber); font-size: 11px; letter-spacing: .15em;
-    text-anchor: start; opacity: .9; }
-  #played-label { fill: var(--vfd); font-size: 11px; letter-spacing: .15em;
-    text-anchor: end; opacity: .75; }
+  /* the deck's two counters, sitting on the floor of the tape window */
+  #spool-row { display: flex; justify-content: space-between; align-items: baseline;
+    gap: .6rem; padding: .6rem .15rem .15rem; font-size: 11px;
+    letter-spacing: .15em; }
+  #spool-label { color: var(--amber); opacity: .9; }
+  #played-label { color: var(--vfd); opacity: .75; text-align: right; }
   #pack-supply, #pack-take { fill: #100b18; }
   #counter {
     position: absolute; right: .45rem; top: .35rem;
@@ -365,10 +367,16 @@
                 <line x1="370.5" y1="65.5" x2="389.5" y2="54.5"/>
               </g>
             </g>
-            <text id="spool-label" x="12" y="112">0 TAKES · 0 MIN</text>
-            <text id="played-label" x="508" y="112">0 TAKES · 0 MIN</text>
           </svg>
           <span id="counter">0000</span>
+        </div>
+        <!-- out of the SVG on purpose: the mech keeps a fixed aspect ratio and
+             centres in the window, so labels inside it floated ~90px above the
+             cassette floor once the window grew. As markup they pin to the
+             bottom whatever height the panel takes. -->
+        <div id="spool-row">
+          <span id="spool-label">0 TAKES · 0 MIN</span>
+          <span id="played-label">0 TAKES · 0 MIN</span>
         </div>
       </div>
 

@@ -152,14 +152,7 @@ def total_vram_mb():
     return _smi("memory.total")
 
 
-def vram_budget_mb():
-    """What this process may use: everything free right now, less the
-    headroom the music server needs to start. Returns None when the card
-    cannot be measured, in which case we do not cap at all."""
-    free = free_vram_mb()
-    if free is None:
-        return None
-    return max(1024, free - VRAM_HEADROOM_MB)
+CONTEXT_MB = 500  # roughly what ComfyUI needs just to create a CUDA context
 
 
 def free_the_card():
@@ -245,15 +238,12 @@ def main():
         if free is not None:
             print(f"{free} MB VRAM free after unloading the generator",
                   flush=True)
-            need = FLAMINGO_VRAM_MB + VRAM_HEADROOM_MB
-            if free < need:
+            if free < FLAMINGO_VRAM_MB:
                 print(f"NOT ENOUGH VRAM: Music Flamingo needs about "
-                      f"{FLAMINGO_VRAM_MB} MB, plus {VRAM_HEADROOM_MB} MB "
-                      f"kept free for the music server, and only {free} MB "
-                      "is available. Something else is holding the card (a "
-                      "game, another model, a second ComfyUI). Free it and "
-                      "re-run — the pass resumes where it stopped.",
-                      flush=True)
+                      f"{FLAMINGO_VRAM_MB} MB and only {free} MB is free. "
+                      "Something else is holding the card (a game, another "
+                      "model, a second ComfyUI). Free it and re-run — the "
+                      "pass resumes where it stopped.", flush=True)
                 sys.exit(1)
 
         import logging
@@ -271,26 +261,21 @@ def main():
         logging.getLogger("bitsandbytes.autograd._functions").setLevel(
             logging.ERROR)
 
-        budget = vram_budget_mb()
-        total = total_vram_mb()
-        kwargs = {}
-        if budget:
-            # Two caps, because they bound different things: max_memory bounds
-            # where accelerate PLACES weights, the allocator fraction bounds
-            # what activations may then grow into. Only both together keep the
-            # headroom real for the whole pass.
-            kwargs["max_memory"] = {0: f"{budget}MiB", "cpu": "64GiB"}
-            if total:
-                torch.cuda.set_per_process_memory_fraction(
-                    min(0.95, budget / total))
-            print(f"VRAM budget {budget} MB, leaving {VRAM_HEADROOM_MB} MB "
-                  "for the music server", flush=True)
+        # NOT capped with max_memory / set_per_process_memory_fraction.
+        # Tried and reverted: on a 16 GB card Flamingo's 8-bit weights are
+        # ~11.5 GB and its audio-encoder activations another ~1.5 GB, so any
+        # cap that leaves real headroom leaves too little for the model — a
+        # 12 GB budget loaded the weights fine and then failed EVERY track on
+        # a 334 MB activation. The card is simply not big enough to host both
+        # this model and a spare CUDA context by squeezing the model.
+        # Headroom is made by releasing cache below, and by the music server
+        # waiting for the card instead of crash-looping (see systemd/).
         print("loading Music Flamingo 8-bit", flush=True)
         processor = AutoProcessor.from_pretrained(MODEL)
         model = MusicFlamingoForConditionalGeneration.from_pretrained(
             MODEL,
             quantization_config=BitsAndBytesConfig(load_in_8bit=True),
-            device_map="auto", **kwargs)
+            device_map="auto")
         model.eval()
         sr = processor.feature_extractor.sampling_rate
 
@@ -304,15 +289,17 @@ def main():
                     print(f"YIELD tank at {level:.0f}s < {YIELD_BELOW_S:.0f}s "
                           "— handing the GPU back to generation", flush=True)
                     sys.exit(4)
-            # The allocator holds freed blocks, so nvidia-smi keeps showing
-            # them as used and the headroom quietly disappears over a long
-            # pass. Hand them back whenever the reserve dips into it.
-            if i % 5 == 0:
+            # The allocator keeps freed blocks, which nvidia-smi still counts
+            # as used, so the card looks full even when this pass is between
+            # tracks. Handing them back is what lets the music server create
+            # a CUDA context without this pass giving up the model.
+            if i % 3 == 0:
                 free_now = free_vram_mb()
                 if free_now is not None and free_now < VRAM_HEADROOM_MB:
                     torch.cuda.empty_cache()
+                    after = free_vram_mb()
                     print(f"released cache — free VRAM {free_now} MB -> "
-                          f"{free_vram_mb()} MB", flush=True)
+                          f"{after} MB", flush=True)
             path = os.path.join(LIB, rel)
             with open(breadcrumb, "w") as f:
                 f.write(rel)

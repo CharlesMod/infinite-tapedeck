@@ -5,12 +5,18 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/path/to/tapedeck/ComfyUI
+# The AI listening pass legitimately fills the card, and CUDA context creation
+# fails outright when it does — without this the service crash-loops until the
+# dub ends instead of simply waiting for it. Args: MB needed, timeout (0=wait).
+ExecStartPre=/path/to/tapedeck/systemd/wait-for-vram.sh 1000 0
 ExecStart=/path/to/venv/bin/python /path/to/tapedeck/ComfyUI/main.py \
     --port 8189 \
     --reserve-vram 1.2 \
     --listen 0.0.0.0
 Restart=on-failure
-RestartSec=5
+RestartSec=15
+# a boot that waits on the GPU must not count against the restart limiter
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=default.target
