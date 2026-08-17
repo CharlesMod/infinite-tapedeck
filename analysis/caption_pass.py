@@ -14,6 +14,8 @@ uncaptioned track only, prints the result)
 import hashlib
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
 import urllib.request
@@ -63,6 +65,39 @@ PROMPT = (
 )
 
 
+BREADCRUMB = os.path.join(os.path.dirname(OUT), "caption_attempting.txt")
+
+
+def _stopped(*_):
+    """SIGTERM is the pipeline, the deck's cancel button, or a person —
+    none of which is the track killing the process. Leaving the breadcrumb
+    behind would blame a perfectly good file and skip it forever after."""
+    try:
+        os.unlink(BREADCRUMB)
+    except OSError:
+        pass
+    try:
+        os.unlink(PAUSE_FLAG)
+    except OSError:
+        pass
+    sys.exit(143)
+
+
+def radio_is_live():
+    """Is there a running radio to yield the card TO?
+
+    The duty cycle exists so a long pass does not starve a playing station.
+    On a first capture there is no daemon, no essence cards and an empty
+    tank — yielding there hands the GPU to nobody and waits forever for a
+    tank nothing is filling. The daemon rewrites daemon_state.json on every
+    log line, so a fresh timestamp is a real heartbeat."""
+    try:
+        with open(f"{BASE}/radio/daemon_state.json") as f:
+            return time.time() - int(json.load(f).get("ts", 0)) < 300
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+
+
 def content_hash(path):
     h = hashlib.blake2b(digest_size=16)
     with open(path, "rb") as f:
@@ -83,7 +118,46 @@ def queue_busy():
     return False
 
 
+FLAMINGO_VRAM_MB = 12000  # 8-bit weights plus activations
+
+
+def free_vram_mb():
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5).stdout.strip()
+        return int(out.splitlines()[0])
+    except Exception:
+        return None
+
+
+def free_the_card():
+    """An idle queue is not an idle card — ComfyUI holds model weights
+    between jobs, and Flamingo cannot load into what is left. Ask each
+    server to drop its weights, then wait for the VRAM to actually come
+    back before committing to an 8-bit load."""
+    for host in SERVERS:
+        try:
+            req = urllib.request.Request(
+                host + "/free",
+                data=json.dumps({"unload_models": True,
+                                 "free_memory": True}).encode(),
+                headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=15).read()
+        except Exception:
+            continue  # server down, or an older build without /free
+    for _ in range(15):
+        free = free_vram_mb()
+        if free is None or free >= FLAMINGO_VRAM_MB:
+            return free
+        time.sleep(2)
+    return free_vram_mb()
+
+
 def main():
+    signal.signal(signal.SIGTERM, _stopped)
+    signal.signal(signal.SIGINT, _stopped)
     one = "--one" in sys.argv
     done = set()
     if os.path.exists(OUT):
@@ -103,12 +177,14 @@ def main():
                     todo.append(rel)
     print(f"{len(todo)} tracks to caption ({len(done)} done)", flush=True)
     if not todo:
+        print(f"RESULT {len(done)} already described, nothing new",
+              flush=True)
         return
     if one:
         todo = todo[:1]
 
     poison_path = os.path.join(os.path.dirname(OUT), "caption_poison.json")
-    breadcrumb = os.path.join(os.path.dirname(OUT), "caption_attempting.txt")
+    breadcrumb = BREADCRUMB
     poison = set()
     if os.path.exists(poison_path):
         with open(poison_path) as f:
@@ -135,12 +211,32 @@ def main():
         print("PAUSE raised; waiting for tank generation to drain", flush=True)
         while queue_busy():
             time.sleep(15)
+        free = free_the_card()
+        if free is not None:
+            print(f"{free} MB VRAM free after unloading the generator",
+                  flush=True)
+            if free < FLAMINGO_VRAM_MB:
+                print(f"NOT ENOUGH VRAM: Music Flamingo needs about "
+                      f"{FLAMINGO_VRAM_MB} MB and only {free} MB is free. "
+                      "Something else is holding the card (a game, another "
+                      "model, a second ComfyUI). Free it and re-run — the "
+                      "pass resumes where it stopped.", flush=True)
+                sys.exit(1)
+
+        import logging
 
         import numpy as np
         import librosa
         import torch
         from transformers import (AutoProcessor, BitsAndBytesConfig,
                                   MusicFlamingoForConditionalGeneration)
+
+        # bitsandbytes logs "MatMul8bitLt: inputs will be cast..." once per
+        # matmul — nearly 3 million lines and 240 MB of log across one real
+        # corpus, which also floods the deck's capture readout. The cast is
+        # expected for an 8-bit model; we do not need to hear about it.
+        logging.getLogger("bitsandbytes.autograd._functions").setLevel(
+            logging.ERROR)
 
         print("loading Music Flamingo 8-bit", flush=True)
         processor = AutoProcessor.from_pretrained(MODEL)
@@ -153,7 +249,7 @@ def main():
 
         t_all = time.time()
         for i, rel in enumerate(todo, 1):
-            if YIELD_BELOW_S:
+            if YIELD_BELOW_S and radio_is_live():
                 sys.path.insert(0, f"{BASE}/radio")
                 import stations
                 level = stations.tank_level(stations.active())
@@ -222,6 +318,8 @@ def main():
             except FileNotFoundError:
                 pass
             print(f"PROG {i} {len(todo)} {rel}", flush=True)
+        wrote = sum(1 for _ in open(OUT)) if os.path.exists(OUT) else 0
+        print(f"RESULT {wrote} track(s) described by ear", flush=True)
     finally:
         try:
             os.unlink(PAUSE_FLAG)

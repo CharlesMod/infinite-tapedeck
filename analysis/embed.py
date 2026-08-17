@@ -110,6 +110,8 @@ def main():
                     todo.append(rel)
     print(f"{len(todo)} tracks to embed ({len(index)} already done)", flush=True)
     if not todo:
+        print(f"RESULT {len(index)} already embedded, nothing new",
+              flush=True)
         return
 
     device = pick_device()
@@ -187,6 +189,9 @@ def main():
     with open(os.path.join(OUTDIR, "embeddings_keys.json"), "w") as f:
         json.dump(keys, f, indent=1)
     print(f"pooled matrix: {len(keys)} x {mat[0].shape[0]}", flush=True)
+    print(f"RESULT {len(todo) - len(failures)} embedded on {device} · "
+          f"{mat[0].shape[0]}-dim"
+          + (f" · {len(failures)} failed" if failures else ""), flush=True)
 
 
 if __name__ == "__main__":

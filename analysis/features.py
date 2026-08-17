@@ -122,6 +122,9 @@ def main():
             if i % 25 == 0:
                 print(f"[{i}/{len(todo)}] ok={ok} skip={skip} fail={fail}", flush=True)
     print(f"done: ok={ok} skip={skip} fail={fail}", flush=True)
+    print(f"RESULT {ok} analyzed"
+          + (f", {skip} already cached" if skip else "")
+          + (f", {fail} failed" if fail else ""), flush=True)
     if fail and not ok and not skip:
         # Nothing analyzed and nothing cached: clustering would later fail on
         # an empty features.jsonl, far from the actual cause (see FAIL lines).

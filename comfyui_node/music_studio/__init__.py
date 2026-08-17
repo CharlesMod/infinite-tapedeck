@@ -638,9 +638,10 @@ def _spawn_import(slug, with_captions):
     global _import_proc
     if _import_state().get("state") == "running":
         return "an import is already running"
+    # captions are the pipeline's default, so an unticked box has to say so
     cmd = [VENV_PY, f"{ANALYSIS_SCRIPTS}/import_pipeline.py", "--station", slug]
-    if with_captions:
-        cmd.append("--with-captions")
+    if not with_captions:
+        cmd.append("--no-captions")
     # a capture must outlive this server: a plain child sits in our systemd
     # cgroup and dies with every service restart (start_new_session does NOT
     # escape a cgroup). A transient scope gets its own; plain child fallback

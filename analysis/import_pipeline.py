@@ -9,7 +9,7 @@ event, so a UI can draw a per-stage track bar and an overall capture bar.
 Stage scripts are resume-safe, so re-running an import only processes new or
 changed files.
 
-Usage: import_pipeline.py --station SLUG [--with-captions] [--describe TEXT]
+Usage: import_pipeline.py --station SLUG [--no-captions] [--describe TEXT]
 """
 import json
 import os
@@ -33,7 +33,7 @@ PROGRESS = f"{SCRIPTS}/import_progress.json"
 sys.path.insert(0, f"{BASE}/radio")
 import stations  # noqa: E402
 
-USAGE = ("usage: import_pipeline.py --station SLUG [--with-captions] "
+USAGE = ("usage: import_pipeline.py --station SLUG [--no-captions] "
          "[--describe TEXT] [--source DIR]")
 
 
@@ -49,7 +49,11 @@ def opt(name):
     return sys.argv[i]
 
 
-WITH_CAPTIONS = "--with-captions" in sys.argv
+# Captions are the default: a station described only by tempo and brightness
+# numbers gives the generator nothing to aim at, and everything downstream is
+# written from that description. --with-captions is still accepted so older
+# instructions keep working.
+WITH_CAPTIONS = "--no-captions" not in sys.argv
 DESCRIBE = opt("--describe")
 STATION = opt("--station")
 if STATION is None and "--source" in sys.argv:
@@ -94,9 +98,101 @@ def flush():
     os.replace(tmp, PROGRESS)
 
 
-def note(line):
-    _state["log"] = (_state["log"] + [line])[-25:]
+# ------------------------------------------------------------ presentation
+#
+# Two sinks with different jobs. The console (and so the deck's capture log,
+# which is this process's stdout) gets one legible line per stage. The full
+# child output goes to analysis/capture.log for bug reports. Per-call library
+# warnings are counted rather than repeated: 2.9M lines and 240 MB of log
+# were measured on one real corpus, which also pushed every useful line out
+# of the deck's 25-line readout.
+
+TTY = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+
+def _sgr(code):
+    return (lambda s: f"\033[{code}m{s}\033[0m") if TTY else (lambda s: str(s))
+
+
+BOLD, DIM, GREEN, YELLOW, RED = (_sgr("1"), _sgr("2"), _sgr("32"),
+                                 _sgr("33"), _sgr("31"))
+
+CAPTURE_LOG = f"{A}/capture.log"
+_logf = None
+_painted = False
+_seen_noise = {}
+
+NOISE_KEYS = ("MatMul8bitLt:", "Loading weights:", "Loading checkpoint",
+              "You are sending unauthenticated requests", "it/s]", "s/it]")
+PROBLEM_KEYS = ("FAIL", "UNDECODABLE", "Traceback", "NOT ENOUGH", "POISON",
+                "YIELD", "not enough", "Error", "error:")
+
+
+def raw(line):
+    """Full detail, for bug reports. Never pretty, never truncated."""
+    if _logf:
+        _logf.write(line + "\n")
+
+
+def is_repeat_noise(line):
+    """First of each kind is kept; the rest are counted and dropped."""
+    for key in NOISE_KEYS:
+        if key in line:
+            _seen_noise[key] = _seen_noise.get(key, 0) + 1
+            return _seen_noise[key] > 1
+    return False
+
+
+def is_problem(line):
+    return any(p in line for p in PROBLEM_KEYS)
+
+
+def paint(text):
+    """Transient progress: terminal only, never reaches any log."""
+    global _painted
+    if TTY:
+        sys.stdout.write("\r\033[2K" + text[:118])
+        sys.stdout.flush()
+        _painted = True
+
+
+def say(line=""):
+    """A permanent console line."""
+    global _painted
+    if _painted:
+        sys.stdout.write("\r\033[2K")
+        _painted = False
     print(line, flush=True)
+
+
+def bar(frac, width=16):
+    filled = max(0, min(width, int(round(frac * width))))
+    return "█" * filled + "·" * (width - filled)
+
+
+def human(sec):
+    if sec < 60:
+        return f"{sec:.1f}s"
+    m, s = divmod(int(sec), 60)
+    return f"{m}m {s:02d}s" if m < 60 else f"{m // 60}h {m % 60:02d}m"
+
+
+def note(line):
+    """A real event: the deck's log ring, the console, and the full log."""
+    _state["log"] = (_state["log"] + [line])[-25:]
+    raw(line)
+    say(line)
+    flush()
+
+
+def done(name, summary, secs, mark=None):
+    """One line per stage — the whole point of the console output."""
+    mark = mark or GREEN("✓")
+    line = f"  {mark} {BOLD(f'{name:<11}')} {summary or 'done'}"
+    pad = max(1, 74 - len(f"  x {name:<11} {summary or 'done'}"))
+    say(line + " " * pad + DIM(human(secs)))
+    _state["log"] = (_state["log"] + [f"{name}: {summary}"])[-25:]
+    raw(f"--- {name}: {summary} ({human(secs)})")
     flush()
 
 
@@ -244,22 +340,36 @@ def auto_cards():
         json.dump({"_meta": {"generated": "import_pipeline auto_cards",
                              "note": "starter cards from stats — refine by hand or LLM"},
                    "veins": cards}, f, indent=1)
+    n = len(cards)
+    noun = f"{n} card" + ("" if n == 1 else "s")
     if not os.path.exists(f"{A}/essence_cards.json"):
         with open(f"{A}/essence_cards.json", "w") as f:
             json.dump({"_meta": {"generated": "auto (bootstrap)"},
                        "veins": cards}, f, indent=1)
-        note("cards: bootstrapped essence_cards.json from stats")
-    else:
-        note("cards: essence_cards.json exists — wrote essence_cards_auto.json only")
+        return (f"{noun} written "
+                + ("from listening notes" if captions else "from statistics"))
+    return f"{noun} refreshed as _auto (yours kept)"
 
 
 AUDIO_EXTS = (".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".wma",
               ".aac", ".aiff")
-# Above this the listening pass stops being a coffee break and becomes an
-# overnight job, so the recommendation only fires for small libraries.
-CAPTION_RECOMMEND_MAX = 150
 CAPTION_S_PER_TRACK = 15  # measured on an RTX 5080, 8-bit Flamingo
 FLAMINGO_GB = 17
+
+
+YIELD_WAIT_MAX_S = 3600  # backstop: never park a capture for longer than this
+
+
+def radio_is_live():
+    """Is a tank daemon actually running? The daemon rewrites
+    daemon_state.json on every log line, so a fresh timestamp is a real
+    heartbeat. Without this, a first capture yields the GPU to a radio that
+    does not exist and waits forever for a tank nothing will fill."""
+    try:
+        with open(f"{BASE}/radio/daemon_state.json") as f:
+            return time.time() - int(json.load(f).get("ts", 0)) < 300
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
 
 
 def count_audio(src):
@@ -282,49 +392,57 @@ def missing_caption_deps():
             if importlib.util.find_spec(m) is None]
 
 
-def offer_captions(n):
-    """Small library, captions off — the single highest-value switch in the
-    whole install, so say so, and at a terminal offer to flip it.
+def caption_blockers():
+    """Why the listening pass cannot run, or [] if it can.
 
-    CLAP embeddings give the critic ears but give the generator no words: a
-    stats-only essence card knows your tempo and brightness, not that you
-    handed it dub techno. Everything downstream is written from that card,
-    which is why a caption-less station drifts off-genre and then fails its
-    own critic. The listening pass is what closes the gap."""
-    cached = flamingo_cached()
+    Captions are the default, but a missing dependency must never cost the
+    user their whole capture — the radio still runs without them. Blockers
+    downgrade to a warning, they do not stop the pipeline."""
+    out = []
     missing = missing_caption_deps()
-    mins = max(1, round(n * CAPTION_S_PER_TRACK / 60))
-    free_gb = shutil.disk_usage(BASE).free / 2 ** 30
-    print("\n" + "=" * 70)
-    print(f"  RECOMMENDED: run the AI listening pass on these {n} tracks")
-    print("=" * 70)
-    print("  Without it, this station's taste is described only by numbers")
-    print("  (tempo, brightness, energy shape) — no genre, no instruments, no")
-    print("  production character. Generated takes drift off-style and the")
-    print("  critic rejects most of them. With it, every track gets a written")
-    print("  description that steers generation. It is the difference between")
-    print("  a radio that sounds like your music and one that does not.")
-    print(f"\n  Cost: about {mins} min of GPU time"
-          + ("" if cached else f", plus a one-time {FLAMINGO_GB} GB download")
-          + ".")
-    print("  Resumable and interruptible; it yields the GPU to the radio.")
     if missing:
-        print(f"\n  Needs: pip install {' '.join(missing)}")
-    if not cached and free_gb < FLAMINGO_GB + 3:
-        print(f"\n  NOT ENOUGH DISK: {free_gb:.0f} GB free, needs "
-              f"~{FLAMINGO_GB + 3} GB.")
-        return False
-    if missing or not sys.stdin.isatty():
-        print("\n  Enable it with:  --with-captions")
-        print("=" * 70 + "\n")
-        return False
-    print("=" * 70)
-    try:
-        ans = input("  Run the listening pass now? [Y/n] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return False
-    return ans in ("", "y", "yes")
+        out.append(f"missing {', '.join(missing)} "
+                   f"(pip install {' '.join(missing)})")
+    if not flamingo_cached():
+        free_gb = shutil.disk_usage(BASE).free / 2 ** 30
+        if free_gb < FLAMINGO_GB + 3:
+            out.append(f"only {free_gb:.0f} GB disk free, the model needs "
+                       f"~{FLAMINGO_GB} GB")
+    return out
+
+
+def announce_captions(n):
+    """Captions are on by default — say what that will cost before it runs,
+    so a long pass is never a surprise."""
+    mins = max(1, round(n * CAPTION_S_PER_TRACK / 60))
+    cost = f"~{mins} min of GPU time"
+    if not flamingo_cached():
+        cost += f", plus a one-time {FLAMINGO_GB} GB model download"
+    say(f"  {DIM('AI listening pass on — ' + cost + '.')}")
+    say(f"  {DIM('It is what makes generated songs match your library; '
+                 'skip with --no-captions.')}")
+    say()
+    _state["log"] = (_state["log"] + [f"AI listening pass on ({cost})"])[-25:]
+
+
+def explain_no_captions(n):
+    """--no-captions was passed: be precise about what is being given up,
+    and offer the cheap alternative."""
+    mins = max(1, round(n * CAPTION_S_PER_TRACK / 60))
+    say(f"  {YELLOW('!')} {BOLD('No listening pass')} — this station will be "
+        "described to the")
+    say(f"    generator only by numbers: tempo, brightness, energy shape.")
+    say(f"    Nothing says which genre or instruments, so takes drift "
+        "off-style.")
+    say()
+    if description():
+        say(f"    {DIM('Using your description: ' + description()[:60])}")
+    else:
+        say(f"    {DIM('Say it in your own words instead:')}")
+        say(f"    {DIM('--describe \"dark melodic techno, analog hardware, '
+                       'no vocals\"')}")
+    say(f"    {DIM(f'Or drop --no-captions to run the pass (~{mins} min).')}")
+    say()
 
 
 STAGES = [
@@ -339,19 +457,57 @@ STAGES = [
 ]
 
 
+def header(n_audio):
+    say()
+    say(f"  {BOLD('∞ TAPEDECK')} {DIM('·')} capturing {BOLD(STATION)}")
+    say(f"  {DIM(f'{n_audio} tracks · {SRC}')}")
+    say()
+
+
+def footer(secs):
+    suppressed = sum(n - 1 for n in _seen_noise.values() if n > 1)
+    folded = (f"  ({suppressed} repeated library message"
+              f"{'' if suppressed == 1 else 's'} folded away)")
+    say()
+    say(f"  {GREEN('Captured')} in {human(secs)}."
+        + (DIM(folded) if suppressed else ""))
+    if not stations_ready():
+        say(f"  {DIM('Full detail: ' + CAPTURE_LOG)}")
+        return
+    say()
+    say(f"  {BOLD('Next:')} start the radio, then open the deck")
+    say(f"    {sys.executable} radio/tank_daemon.py")
+    say(f"    {DIM('http://<host>:8188/extensions/music_studio/index.html')}")
+    say()
+
+
+def stations_ready():
+    return os.path.exists(os.path.join(A, "essence_cards.json"))
+
+
 def main():
-    global _child, WITH_CAPTIONS
+    global _child, WITH_CAPTIONS, _logf
+    t_run = time.time()
     n_audio = count_audio(SRC)
-    if not WITH_CAPTIONS and 0 < n_audio <= CAPTION_RECOMMEND_MAX:
-        if offer_captions(n_audio):
-            WITH_CAPTIONS = True
-            _state["with_captions"] = True
-        else:
-            # one condensed line for the deck's capture log — the full block
-            # above only reaches whoever is watching a terminal
-            note(f"TIP: {n_audio} tracks — the listening pass would take "
-                 f"~{max(1, round(n_audio * CAPTION_S_PER_TRACK / 60))} min "
-                 "and is what makes takes sound like this station")
+    try:
+        _logf = open(CAPTURE_LOG, "w")
+    except OSError:
+        _logf = None
+    header(n_audio)
+    if WITH_CAPTIONS:
+        blockers = caption_blockers()
+        if blockers:
+            WITH_CAPTIONS = False
+            _state["with_captions"] = False
+            note("AI listening pass unavailable: " + "; ".join(blockers))
+            note("continuing without it — the radio will still run, but "
+                 "takes will drift off-style. See docs/INSTALL.md step 6.")
+        elif n_audio:
+            announce_captions(n_audio)
+    elif n_audio:
+        explain_no_captions(n_audio)
+        _state["log"] = (_state["log"] + ["captions off by request — "
+                                          "statistics only"])[-25:]
 
     active = [(n, c, w, t) for n, c, w, t in STAGES
               if n != "captions" or WITH_CAPTIONS]
@@ -365,22 +521,27 @@ def main():
         _state["stages"][idx]["state"] = "running"
         _state["track_i"] = _state["track_n"] = 0
         _state["current_track"] = ""
-        note(f"=== stage: {name} ===")
+        raw(f"\n=== stage: {name} ===")
+        t_stage = time.time()
+        summary = ""
+        paint(f"  {DIM('▸')} {name:<11} {DIM('starting…')}")
 
         if name == "captions" and other_captioner_running():
             _state["stages"][idx]["state"] = "skipped"
-            note("captions: another captioner is running — skipped "
-                 "(re-run import later to fill in)")
+            done(name, "skipped — another captioner holds the card",
+                 time.time() - t_stage, mark=YELLOW("–"))
             done_w += weight
             continue
 
         if cmd is None:  # cards
             try:
-                auto_cards()
+                summary = auto_cards()
                 _state["stages"][idx]["state"] = "done"
+                done(name, summary, time.time() - t_stage)
             except Exception as e:
                 _state["stages"][idx]["state"] = "failed"
-                note(f"cards failed: {e!r:.120}")
+                done(name, f"failed: {e!r:.100}", time.time() - t_stage,
+                     mark=RED("✗"))
             done_w += weight
             _state["overall_pct"] = round(done_w / total_w * 100, 1)
             flush()
@@ -407,10 +568,21 @@ def main():
                         _state["overall_pct"] = round(
                             (done_w + weight * frac) / total_w * 100, 1)
                         flush()
+                        paint(f"  {DIM('▸')} {name:<11} {bar(frac)} "
+                              f"{i}/{n}  {DIM(os.path.basename(rel)[:44])}")
                     except ValueError:
                         pass
-                elif line:
-                    note(f"[{name}] {line[:160]}")
+                elif line.startswith("RESULT "):
+                    summary = line[7:].strip()
+                    raw(line)
+                elif not line:
+                    continue
+                elif is_repeat_noise(line):
+                    raw(line)  # first of its kind only
+                elif is_problem(line):
+                    note(f"  {YELLOW('!')} {name}: {line[:150]}")
+                else:
+                    raw(line)  # detail lives in capture.log, not on screen
             rc = _child.wait()
             _child = None
             if rc == 4:
@@ -421,9 +593,23 @@ def main():
                 # SIGTERM exits the process outright, so a plain loop is
                 # correct here (a `_stop` flag was the daemon's idiom, and
                 # borrowing it uninitialized killed every capture at first yield)
+                waited = 0
                 while stations.tank_level(stations.active()) < RESUME_ABOVE_S:
+                    # Never wait on a tank nothing is filling. A daemon that
+                    # died, or was never started, would otherwise park the
+                    # capture here forever.
+                    if not radio_is_live():
+                        note(f"[{name}] no radio running — taking the card "
+                             "back instead of waiting")
+                        break
+                    if waited >= YIELD_WAIT_MAX_S:
+                        note(f"[{name}] tank still low after "
+                             f"{waited // 60} min — resuming anyway")
+                        break
                     time.sleep(60)
-                note(f"[{name}] tank refilled — taking the GPU back")
+                    waited += 60
+                else:
+                    note(f"[{name}] tank refilled — taking the GPU back")
                 continue
             # exit 3 = poison recorded by the script; negative = native crash
             # (SIGABRT et al) whose victim the breadcrumb identifies on the
@@ -439,17 +625,21 @@ def main():
         _state["stages"][idx]["state"] = "done" if rc == 0 else "failed"
         if rc != 0:
             _state["state"] = "failed"
-            note(f"{name} exited {rc} — import stopped")
+            done(name, f"failed (exit {rc}) — capture stopped",
+                 time.time() - t_stage, mark=RED("✗"))
+            say()
+            say(f"  {RED('Capture stopped.')} Full detail: {CAPTURE_LOG}")
             flush()
             sys.exit(1)
+        done(name, summary, time.time() - t_stage)
         done_w += weight
         _state["overall_pct"] = round(done_w / total_w * 100, 1)
         flush()
 
     _state["state"] = "done"
     _state["overall_pct"] = 100.0
-    note("import complete")
     flush()
+    footer(time.time() - t_run)
 
     if not WITH_CAPTIONS and not description():
         # The two ways to give this station words instead of only numbers.
@@ -459,8 +649,9 @@ def main():
               "\nmeasured statistics. Generation will drift off-style. Fix "
               "with either:"
               f"\n  {sys.executable} analysis/import_pipeline.py --station "
-              f"{STATION} --with-captions"
-              "\n      (AI listening pass — best quality, per-track)"
+              f"{STATION}"
+              "\n      (re-run without --no-captions: the AI listening pass, "
+              "best quality)"
               f"\n  {sys.executable} analysis/import_pipeline.py --station "
               f"{STATION} --describe \"dark melodic techno, analog hardware, "
               "no vocals\""

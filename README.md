@@ -75,11 +75,12 @@ to the radio when the spool runs low and resumes once it rewinds.
 - Optional: any OpenAI-compatible local LLM endpoint (llama.cpp, llama-swap,
   Ollama) for caption variety and lyric writing — without one, the radio
   still runs on essence-card seeds
-- **Recommended**: ~17 GB disk for Music Flamingo, which listens to your
-  library and writes what it hears. Without it a station is described to the
-  generator only by numbers (tempo, brightness, energy) — no genre, no
-  instruments — and takes drift off-style. On a small library the pass costs
-  about 15 s per track.
+- ~17 GB disk for [Music Flamingo](https://huggingface.co/nvidia/music-flamingo-2601-hf),
+  which listens to your library and writes what it hears. This runs **by
+  default** (`--no-captions` to skip) because without it a station is
+  described to the generator only by numbers (tempo, brightness, energy) —
+  no genre, no instruments — and takes drift off-style. About 15 s per track,
+  resumable, yields the GPU to the radio.
 
 See **[docs/INSTALL.md](docs/INSTALL.md)** for the full walkthrough.
 
@@ -106,8 +107,8 @@ $COMFY_PY -m pip install -r requirements.txt
 $COMFY_PY analysis/preflight.py
 
 # 4. put music in ./library, then capture it
-#    --with-captions is strongly recommended, especially for small libraries
-$COMFY_PY analysis/import_pipeline.py --station full-library --with-captions
+#    the AI listening pass runs by default (--no-captions to skip)
+$COMFY_PY analysis/import_pipeline.py --station full-library
 
 # 5. run the spool daemon, open the deck, press PLAY
 $COMFY_PY radio/tank_daemon.py &

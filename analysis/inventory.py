@@ -93,6 +93,13 @@ def main():
     print(json.dumps(summary, indent=1))
     for fl in failures:
         print("UNDECODABLE:", fl["path"], fl["error"])
+    # RESULT is the pipeline's one-line summary channel, like PROG
+    codecs = ", ".join(f"{c}×{n}" for c, n in
+                       sorted(summary["codecs"].items(), key=lambda kv: -kv[1]))
+    print(f"RESULT {summary['tracks']} tracks · {summary['total_hours']} h · "
+          f"{codecs}"
+          + (f" · {len(failures)} undecodable" if failures else ""),
+          flush=True)
 
 
 if __name__ == "__main__":

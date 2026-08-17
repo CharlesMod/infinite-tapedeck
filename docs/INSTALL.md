@@ -117,36 +117,41 @@ Put music in `library/`, then:
 $COMFY_PY analysis/import_pipeline.py --station full-library
 ```
 
-This runs inventory → features → CLAP embeddings → taste veins → starter
-essence cards. It is resumable and incremental: re-running only processes new
-or changed files.
+This runs inventory → features → CLAP embeddings → **the AI listening pass**
+→ taste veins → essence cards. It is resumable and incremental: re-running
+only processes new or changed files.
 
-### Strongly recommended: the AI listening pass
+### The listening pass runs by default, and should
 
-```bash
-$COMFY_PY analysis/import_pipeline.py --station full-library --with-captions
-```
-
-**If your library is small, do this.** It is the single biggest quality
-difference in the whole system, and the capture will offer it to you.
-
-Without captions, a station is described to the generator only by numbers —
-tempo, brightness, energy shape, note density. Nothing in that description
-says *techno*, or *fingerpicked guitar*, or *analog tape saturation*. The
-generator fills the gap with whatever it likes, the result drifts off-genre,
-and the critic then rejects most of it. With captions,
 [Music Flamingo](https://huggingface.co/nvidia/music-flamingo-2601-hf)
-listens to every track and writes a paragraph about it, and those words steer
-everything downstream.
+listens to every track and writes a paragraph describing it — genre, tempo
+feel, instruments, arrangement arc, production character — and those words
+steer everything the generator does afterwards.
+
+It is on by default because the alternative is bad: without it a station is
+described only by numbers (tempo, brightness, energy shape, note density).
+Nothing in that says *techno*, or *fingerpicked guitar*, or *analog tape
+saturation*. The generator fills the gap with whatever it likes, the result
+drifts off-genre, and the critic then rejects most of it.
 
 The cost is about 15 seconds of GPU time per track (≈10 minutes for 40
 tracks) plus a one-time 17 GB model download. The pass is resumable, survives
 interruption, and yields the GPU back to the radio when the spool runs low.
+The capture prints the expected time before it starts.
 
-### If you skip captions, say something in your own words
+If the dependencies or the disk space are missing, the capture says so and
+continues without captions rather than failing — the radio still runs.
+
+### Skipping it
 
 ```bash
-$COMFY_PY analysis/import_pipeline.py --station full-library \
+$COMFY_PY analysis/import_pipeline.py --station full-library --no-captions
+```
+
+If you do skip it, say something in your own words instead:
+
+```bash
+$COMFY_PY analysis/import_pipeline.py --station full-library --no-captions \
   --describe "dark melodic techno, analog hardware, hypnotic, no vocals"
 ```
 

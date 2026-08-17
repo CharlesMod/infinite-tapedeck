@@ -194,6 +194,10 @@ def main():
         f.write("\n".join(lines))
     print(f"{len(out['veins'])} veins, {len(out['noise'])} unclustered "
           f"-> veins.json, veins_report.md")
+    n = len(out["veins"])
+    print(f"RESULT {n} vein{'' if n == 1 else 's'} · {method}"
+          + (f" · {len(out['noise'])} one-offs" if out["noise"] else ""),
+          flush=True)
 
 
 if __name__ == "__main__":
