@@ -1119,6 +1119,7 @@ function stageFrom(msg) {
   const m = (msg || "").toLowerCase();
   if (m.includes("bundles")) return "writing";          // LLM residency
   if (m.startsWith("generating")) return "generating";
+  if (m.startsWith("judging")) return "judging";
   if (m.includes("accept")) return "banked";
   if (m.includes("reject")) return "rejected";
   if (m.includes("holding") || m.includes("pause")) return "waiting";

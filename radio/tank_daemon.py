@@ -1534,6 +1534,10 @@ def main():
                     return
                 continue
 
+            # narrate the critic too: scoring runs on CPU and takes a few
+            # seconds, and without a line here the deck sat on "synthesizing"
+            # through it — the one stage of the pipeline with nothing to show
+            log(f"judging {card['name']} {dur:.0f}s against the vein's corpus")
             v = clap_embed(path)
             score = float(v @ critic[vein]["centroid"])
             bias = load_bias(p["analysis"])
