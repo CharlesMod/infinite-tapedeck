@@ -495,6 +495,9 @@
           <input type="range" id="sp-slider" min="20" max="40" step="2.5" value="30">
           <div id="sp-ends"><span>← faster</span><span>quality →</span></div>
           <div id="sp-note"></div>
+          <div id="sp-head" style="margin-top:.5rem"><span>SONG LENGTH</span><span id="ln-val">vein default</span></div>
+          <input type="range" id="ln-slider" min="45" max="300" step="15" value="45">
+          <div id="sp-ends"><span>shorter</span><span>longer →</span></div>
         </div>
         <div id="deck-line">DECK · <span id="deck-msg">listening for the daemon…</span></div>
       </div>
@@ -659,7 +662,16 @@ $("keep").onclick = async () => {
 };
 $("desc").onclick = () => $("desc").classList.toggle("open");
 $("lyrics").onclick = () => $("lyrics").classList.toggle("open");
-$("player").addEventListener("ended", next);
+// Picking one keeper is a request for that song, not for a shift change: the
+// deck used to chain straight into the radio when it ended, which sounded
+// exactly like an old song starting itself. The radio still auto-advances.
+$("player").addEventListener("ended", () => {
+  if (current && current.keeper) {
+    toast("keeper finished — press PLAY for the radio");
+    return;
+  }
+  next();
+});
 
 /* deck instrumentation: reels, counter, VU */
 const player = $("player");
@@ -678,25 +690,57 @@ function initVU() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const srcNode = ctx.createMediaElementSource(player);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 512;
-    srcNode.connect(analyser);
-    analyser.connect(ctx.destination);
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    vu = { ctx, analyser, data };
+    // Real channels. This used to run ONE analyser over the mono sum and split
+    // the FREQUENCY SPECTRUM in half — low bins drove "L", high bins drove "R",
+    // each scaled by its own arbitrary constant. Music always has more energy
+    // down low, so the left meter sat permanently higher and neither needle
+    // had anything to do with a channel. Measured takes are genuinely stereo
+    // (channel correlation 0.16-0.74, balance within ~2 dB), so there is real
+    // per-channel signal to show.
+    const splitter = ctx.createChannelSplitter(2);
+    const aL = ctx.createAnalyser(), aR = ctx.createAnalyser();
+    aL.fftSize = aR.fftSize = 1024;
+    srcNode.connect(splitter);
+    splitter.connect(aL, 0);
+    splitter.connect(aR, 1);
+    srcNode.connect(ctx.destination);
+    // Analysers on a dead-end branch are never pulled by the renderer, so
+    // they read silence while the audio plays perfectly. Give them a path to
+    // the destination through a muted gain — it costs nothing and makes the
+    // branch live.
+    const sink = ctx.createGain();
+    sink.gain.value = 0;
+    aL.connect(sink);
+    aR.connect(sink);
+    sink.connect(ctx.destination);
+    const dl = new Float32Array(aL.fftSize), dr = new Float32Array(aR.fftSize);
+    vu = { ctx, aL, aR };
+    // a VU is logarithmic, and BOTH channels share one scale so the pair can
+    // honestly be compared: -50 dBFS at rest, 0 dBFS full deflection
+    const FLOOR = -50;
+    const pct = (buf) => {
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length);
+      if (rms <= 0) return 0;
+      const db = 20 * Math.log10(rms);
+      return Math.max(0, Math.min(100, (db - FLOOR) / -FLOOR * 100));
+    };
+    let held = [0, 0];
     (function loop() {
       requestAnimationFrame(loop);
       if (player.paused) {
+        held = [0, 0];
         $("vu-l").style.width = $("vu-r").style.width = "0%";
         return;
       }
-      analyser.getByteFrequencyData(data);
-      const half = data.length >> 1;
-      let lo = 0, hi = 0;
-      for (let i = 0; i < half; i++) lo += data[i];
-      for (let i = half; i < data.length; i++) hi += data[i];
-      $("vu-l").style.width = Math.min(100, (lo / half) / 255 * 130) + "%";
-      $("vu-r").style.width = Math.min(100, (hi / half) / 255 * 180) + "%";
+      aL.getFloatTimeDomainData(dl);
+      aR.getFloatTimeDomainData(dr);
+      // ballistics: needles rise instantly and fall slowly, like the real thing
+      const now = [pct(dl), pct(dr)];
+      held = held.map((h, i) => Math.max(now[i], h * 0.88));
+      $("vu-l").style.width = held[0].toFixed(1) + "%";
+      $("vu-r").style.width = held[1].toFixed(1) + "%";
     })();
   } catch (e) { /* VU is decoration; audio still plays */ }
 }
@@ -1243,6 +1287,10 @@ async function spLoad() {
     const sl = $("sp-slider");
     sl.min = d.min; sl.max = d.max; sl.step = d.step; sl.value = d.steps;
     spPaint(d.steps, d.effective);
+    const ln = $("ln-slider");
+    ln.min = d.len_min - d.len_step; ln.max = d.len_max; ln.step = d.len_step;
+    ln.value = d.target_s || (d.len_min - d.len_step);
+    lnPaint(parseInt(ln.value));
   } catch {}
 }
 
@@ -1255,6 +1303,25 @@ $("sp-slider").addEventListener("change", async e => {
       body: JSON.stringify({ steps }) })).json();
     spPaint(r.steps, r.effective);
     toast(`${r.effective} steps — applies to the next take`);
+  } catch {}
+});
+// song length: 0 (leftmost) means "use each vein's own measured envelope",
+// which is the honest default — the envelope comes from how long the tracks
+// in that vein actually are.
+function lnPaint(v) {
+  $("ln-val").textContent = v <= 45 ? "vein default"
+    : `${Math.floor(v / 60)}:${String(v % 60).padStart(2, "0")}`;
+}
+$("ln-slider").addEventListener("input", e => lnPaint(parseInt(e.target.value)));
+$("ln-slider").addEventListener("change", async e => {
+  const v = parseInt(e.target.value);
+  try {
+    const r = await (await fetch("/music_studio/speed", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_s: v <= 45 ? 0 : v }) })).json();
+    lnPaint(r.target_s || 45);
+    toast(r.target_s ? `aiming for ${Math.round(r.target_s)}s takes`
+                     : "back to each vein's own lengths");
   } catch {}
 });
 spLoad();

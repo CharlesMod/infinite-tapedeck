@@ -49,7 +49,9 @@ AUDIO_EXTS = (".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".wma",
 
 FILE_RE = re.compile(r"^v\d+__\d+_\d+\.mp3$")
 FEEDBACK_MULT = {"keep": 1.10, "dislike": 0.85, "skip": 0.97}
-SPEED_WINDOW = 20             # takes averaged into the SPEED readout
+SPEED_WINDOW = 3              # takes averaged into the SPEED readout — short
+                              # on purpose: this is a "how fast is it going
+                              # right now" needle, not a lifetime average
 
 stations.ensure_registry()
 _last_vein = None
@@ -609,6 +611,7 @@ async def keeper_export(request):
 
 STEPS_FILE = f"{BASE}/radio/speed.json"
 STEPS_MIN, STEPS_MAX, STEPS_STEP, STEPS_DEFAULT = 20.0, 40.0, 2.5, 30.0
+LEN_MIN, LEN_MAX, LEN_STEP = 60.0, 300.0, 15.0   # 0 = use the vein's envelope
 
 
 def _round_half_up(v):
@@ -618,12 +621,29 @@ def _round_half_up(v):
     return int(math.floor(float(v) + 0.5))
 
 
-def _steps():
+def _settings():
     try:
         with open(STEPS_FILE) as f:
-            return max(STEPS_MIN, min(STEPS_MAX, float(json.load(f)["steps"])))
-    except (OSError, ValueError, TypeError, KeyError):
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _steps():
+    try:
+        return max(STEPS_MIN, min(STEPS_MAX, float(_settings()["steps"])))
+    except (KeyError, TypeError, ValueError):
         return STEPS_DEFAULT
+
+
+def _target_s():
+    """0 means each vein uses its own measured length envelope."""
+    try:
+        v = float(_settings().get("target_s") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(LEN_MIN, min(LEN_MAX, v)) if v else 0.0
 
 
 @PromptServer.instance.routes.get("/music_studio/speed")
@@ -633,6 +653,8 @@ async def speed_get(request):
         "steps": v, "effective": _round_half_up(v),
         "min": STEPS_MIN, "max": STEPS_MAX,
         "step": STEPS_STEP, "default": STEPS_DEFAULT,
+        "target_s": _target_s(),
+        "len_min": LEN_MIN, "len_max": LEN_MAX, "len_step": LEN_STEP,
     })
 
 
@@ -641,22 +663,38 @@ async def speed_set(request):
     """Move the speed/quality slider. The daemon re-reads this per take, so
     it lands on the next generation rather than needing a restart."""
     data = await request.json()
-    try:
-        v = float(data["steps"])
-    except (KeyError, TypeError, ValueError):
-        return web.json_response({"error": "steps must be a number"},
+    cur = _settings()
+    if "steps" in data:
+        try:
+            v = float(data["steps"])
+        except (TypeError, ValueError):
+            return web.json_response({"error": "steps must be a number"},
+                                     status=400)
+        # snap to the slider's granularity so the file never holds a value
+        # the UI cannot represent
+        cur["steps"] = max(STEPS_MIN, min(STEPS_MAX,
+                                          round(v / STEPS_STEP) * STEPS_STEP))
+    if "target_s" in data:
+        try:
+            t = float(data["target_s"] or 0)
+        except (TypeError, ValueError):
+            return web.json_response({"error": "target_s must be a number"},
+                                     status=400)
+        cur["target_s"] = (0.0 if t <= 0 else
+                           max(LEN_MIN, min(LEN_MAX,
+                                            round(t / LEN_STEP) * LEN_STEP)))
+    if "steps" not in data and "target_s" not in data:
+        return web.json_response({"error": "steps or target_s required"},
                                  status=400)
-    # snap to the slider's own granularity so the file never holds a value
-    # the UI cannot represent
-    v = round(v / STEPS_STEP) * STEPS_STEP
-    v = max(STEPS_MIN, min(STEPS_MAX, v))
     os.makedirs(os.path.dirname(STEPS_FILE), exist_ok=True)
     tmp = STEPS_FILE + ".tmp"
     with open(tmp, "w") as f:
-        json.dump({"steps": v}, f)
+        json.dump(cur, f)
     os.replace(tmp, STEPS_FILE)
+    v = _steps()
     return web.json_response({"ok": True, "steps": v,
-                              "effective": _round_half_up(v)})
+                              "effective": _round_half_up(v),
+                              "target_s": _target_s()})
 
 
 @PromptServer.instance.routes.get("/music_studio/stations")

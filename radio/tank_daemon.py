@@ -126,6 +126,11 @@ STEPS = int(_cfg["steps"])
 # granularity is rounded at graph time.
 STEPS_FILE = f"{BASE}/radio/speed.json"
 STEPS_MIN, STEPS_MAX, STEPS_STEP = 20.0, 40.0, 2.5
+# Target song length, also from the deck. 0 means "use each vein's own
+# measured length envelope", which is the default and usually the right
+# answer — the envelope comes from how long the tracks in that vein actually
+# are. A value overrides it for every vein.
+LEN_MIN, LEN_MAX, LEN_STEP = 60.0, 300.0, 15.0
 
 
 def _round_half_up(v):
@@ -134,6 +139,17 @@ def _round_half_up(v):
     disagreed and the UI promised a step count the daemon did not use."""
     import math
     return int(math.floor(float(v) + 0.5))
+
+
+def load_target_len():
+    """Listener's preferred take length in seconds, or None to use the
+    vein's own envelope. Read per take, like the steps slider."""
+    try:
+        with open(STEPS_FILE) as f:
+            v = float(json.load(f).get("target_s") or 0)
+        return max(LEN_MIN, min(LEN_MAX, v)) if v else None
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def load_steps():
@@ -461,7 +477,13 @@ def fallback_caption(vein, card):
     bpm = random.randint(int(env["bpm"][0]), int(env["bpm"][1]))
     lo, hi = env["length_s"]
     target_s = random.randint(int(lo), int(hi))
-    mins = target_s // 60
+    want = load_target_len()
+    if want:
+        target_s = int(max(LEN_MIN, random.uniform(want * 0.85, want * 1.15)))
+    # round, do not truncate: // 60 turned a 179s target into "about 2
+    # minutes", i.e. a request for 59s less than intended, before the model
+    # had done anything. Up to a minute was being lost in the phrasing.
+    mins = max(1, round(target_s / 60))
     seed_caption = card["caption_seed"].replace(
         "Global Metadata: ",
         f"Global Metadata: An approximately {mins}-minute piece with a "
@@ -844,8 +866,16 @@ def sample_caption(vein, card):
     technique = random.choice(TECHNIQUES)
     lo, hi = card["envelope"]["length_s"]
     target_s = random.randint(int(lo), int(hi))
+    want = load_target_len()
+    if want:
+        # keep some spread around the listener's choice, so a fixed setting
+        # does not make every take exactly the same length
+        target_s = int(max(LEN_MIN, random.uniform(want * 0.85, want * 1.15)))
 
-    mins = target_s // 60
+    # round, do not truncate: // 60 turned a 179s target into "about 2
+    # minutes", i.e. a request for 59s less than intended, before the model
+    # had done anything. Up to a minute was being lost in the phrasing.
+    mins = max(1, round(target_s / 60))
     # Precomputed, not spliced into the prompt's concatenation chain: a bare
     # conditional in the middle of implicit string joining is a syntax error
     # waiting to happen, and this line only appears for one arc.
