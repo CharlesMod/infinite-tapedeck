@@ -1200,7 +1200,7 @@ def generate(caption, lyrics, seed, max_duration, steps=None, eng=None):
                              + (q.get("queue_pending") or []))
             except Exception:
                 queued = True  # cannot tell: keep waiting rather than guess
-            if not queued and time.time() - t0 > 30:
+            if not queued and time.time() - t0 > 12:
                 return None, "prompt lost (server restarted?)"
             continue
         entry = h[pid]
@@ -1404,7 +1404,10 @@ def main():
         reason = hold_reason()
         if reason:
             log(f"holding: {reason}")
-            time.sleep(LOOP_SLEEP)
+            # a bouncing server is back within seconds, so poll for it rather
+            # than sleeping out a full cycle; a busy sibling or a game really
+            # is a wait
+            time.sleep(8 if "server down" in reason else LOOP_SLEEP)
             continue
 
         if not bundles:
@@ -1509,6 +1512,14 @@ def main():
                     consec_timeouts = 0
                     time.sleep(45)
                     continue
+            if status and "prompt lost" in status:
+                # BACKOFF is for a machine in trouble — a preempted run, a
+                # server that fell over. A prompt lost to a restart leaves a
+                # perfectly healthy server and an empty queue, so waiting two
+                # minutes is pure dead air: 40s to notice plus 120s of
+                # penance for a bounce that took twelve seconds.
+                log("prompt lost — re-cutting immediately")
+                continue
             log(f"generation {status}; backoff {BACKOFF}s")
             time.sleep(BACKOFF)
             continue

@@ -202,6 +202,89 @@ async def audio(request):
     return web.json_response({"error": "gone"}, status=404)
 
 
+# ------------------------------------------------------------------ shuffle
+#
+# Three modes. "generated" draws from everything this station has ever made
+# that is still on disk — the live spool, the archive the janitor has not
+# collected yet, and the keepers — so a take banked while you are listening
+# joins the pool on the next pick without any extra plumbing. "all" adds the
+# source music the station was built from, which is the one place the deck
+# serves a file it did not generate, so it gets its own route and its own
+# containment check rather than loosening the one guarding generated audio.
+
+def _generated_pool(p):
+    recs, _, _ = _read_state(p)
+    out = []
+    for m in recs.values():
+        if "file" not in m:
+            continue
+        for root in (p["tank"], p["keepers"]):
+            if os.path.exists(os.path.join(root, m["file"])):
+                out.append(m)
+                break
+    return out
+
+
+@PromptServer.instance.routes.get("/music_studio/shuffle")
+async def shuffle_next(request):
+    mode = request.query.get("mode", "generated")
+    if mode not in ("generated", "all"):
+        return web.json_response({"error": "bad mode"}, status=400)
+    p = _p()
+    pool = [{"kind": "take", "m": m} for m in _generated_pool(p)]
+    if mode == "all":
+        pool += [{"kind": "source", "rel": rel} for rel in _source_audio(p["source"])]
+    if not pool:
+        return web.json_response({"empty": True,
+                                  "hint": "nothing to shuffle yet"})
+    pick = random.choice(pool)
+    if pick["kind"] == "take":
+        m = pick["m"]
+        return web.json_response({
+            "id": m["id"], "vein": m["vein"],
+            "vein_name": m.get("vein_name", "?"), "shuffle": True,
+            "url": f"/music_studio/audio/{m['file']}",
+            "duration_s": m["duration_s"], "bpm": m.get("bpm"),
+            "score": m.get("score"), "caption": m.get("caption", ""),
+            "lyrics": m.get("lyrics", ""),
+        })
+    rel = pick["rel"]
+    return web.json_response({
+        "id": None, "vein": None, "shuffle": True, "source": True,
+        "vein_name": os.path.splitext(os.path.basename(rel))[0][:48],
+        "url": "/music_studio/source_audio?path=" + urllib.parse.quote(rel),
+        "duration_s": None, "bpm": None, "score": None,
+        "caption": f"From your library — {rel}", "lyrics": "",
+    })
+
+
+@PromptServer.instance.routes.get("/music_studio/source_audio")
+async def source_audio(request):
+    """Serve one of the station's own music files.
+
+    Generated audio is guarded by a filename pattern, which cannot work here:
+    these names are whatever is on disk. So contain by path instead — resolve
+    against the station's source directory and refuse anything that escapes
+    it, which also covers a symlink pointing out of the tree."""
+    rel = request.query.get("path", "")
+    p = _p()
+    root = os.path.realpath(p["source"])
+    path = os.path.realpath(os.path.join(root, rel))
+    if not path.startswith(root + os.sep):
+        return web.json_response({"error": "rejected"}, status=400)
+    if not path.lower().endswith(AUDIO_EXTS) or not os.path.isfile(path):
+        return web.json_response({"error": "gone"}, status=404)
+    # the URL carries the name in a query string, so there is no extension for
+    # the browser to sniff — without an explicit type it arrives as
+    # application/octet-stream and <audio> refuses to play it
+    mime = {".flac": "audio/flac", ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
+            ".ogg": "audio/ogg", ".opus": "audio/ogg", ".wav": "audio/wav",
+            ".wma": "audio/x-ms-wma", ".aac": "audio/aac",
+            ".aiff": "audio/aiff"}.get(os.path.splitext(path)[1].lower(),
+                                       "application/octet-stream")
+    return web.FileResponse(path, headers={"Content-Type": mime})
+
+
 @PromptServer.instance.routes.post("/music_studio/feedback")
 async def feedback(request):
     data = await request.json()

@@ -184,7 +184,16 @@
   /* ---------------- transport ---------------- */
   audio { width: 100%; margin-bottom: .9rem; accent-color: var(--accent, var(--cyan));
           filter: hue-rotate(0deg) saturate(1.2); }
-  #buttons { display: grid; grid-template-columns: repeat(4, 1fr); gap: .55rem; }
+  /* flex, not a fixed column count: PLAY is hidden once the deck is running,
+     and a grid keeps its empty column either way — six controls before the
+     first press, five after, always one row */
+  #buttons { display: flex; gap: .45rem; }
+  #buttons button { flex: 1 1 0; min-width: 0; }
+  #buttons button { padding: .7rem .25rem; font-size: .72rem; letter-spacing: .08em; }
+  #shuffle.on { border-color: var(--vfd);
+                color: var(--vfd); text-shadow: 0 0 7px var(--vfd); }
+  #shuffle.all { border-color: var(--cyan);
+                 color: var(--cyan); text-shadow: 0 0 7px var(--cyan); }
   button {
     background: linear-gradient(180deg, #2b2344, #171126 55%, #100b1d);
     color: var(--text); border: 1px solid #3a2f60; border-top-color: #574a8a;
@@ -458,6 +467,7 @@
         <button id="skip" title="not right now — mild signal">⏭ skip</button>
         <button id="dislike" title="less of this vein — strong signal">✕ dislike</button>
         <button id="keep" title="save forever + more of this vein">★ keep</button>
+        <button id="shuffle" title="off · generated · everything">⤨ shuffle</button>
       </div>
       <div id="gauge"></div>
       <div id="foot">skip = "not now" · dislike = "less of this" · keep = saved
@@ -611,9 +621,16 @@ function show(t, replay) {
   const idPart = String(t.id || "").split("_")[1] || String(t.id || "");
   $("title").textContent = (t.replay ? "ARCHIVE · TAKE " : "TAKE ")
     + (idPart ? idPart.slice(0, 6) : (t.vein_name || "KEEPER").toUpperCase());
-  $("stats").textContent =
-    `${Math.floor(t.duration_s / 60)}:${String(Math.round(t.duration_s) % 60).padStart(2, "0")}` +
-    ` · ${t.bpm} BPM · FIT ${t.score}` +
+  // a library file has no bpm, no critic score and no duration until the
+  // player reads it — say what is true rather than printing "null BPM"
+  const dur = t.duration_s != null
+    ? `${Math.floor(t.duration_s / 60)}:${String(Math.round(t.duration_s) % 60).padStart(2, "0")}`
+    : "--:--";
+  $("stats").textContent = dur +
+    (t.bpm != null ? ` · ${t.bpm} BPM` : "") +
+    (t.score != null ? ` · FIT ${t.score}` : "") +
+    (t.source ? " · FROM YOUR LIBRARY" : "") +
+    (t.shuffle && !t.source ? " · SHUFFLE" : "") +
     (t.left_in_tank != null ? ` · ${t.left_in_tank} ON SPOOL` : "") +
     (t.replay ? " · REPLAY WHILE FRESH TAPE WINDS" : replay ? " · REWIND" : "");
   $("desc").textContent = t.caption;
@@ -627,8 +644,19 @@ function show(t, replay) {
   ly.classList.remove("open");
   $("keep").classList.remove("done");
   $("keep").textContent = "★ keep";
+  // keep/dislike steer a vein; one of your own files belongs to none of them
+  const own = !!t.source;
+  $("keep").disabled = own;
+  $("dislike").disabled = own;
   const p = $("player");
   p.src = t.url;
+  if (t.duration_s == null) {
+    p.addEventListener("loadedmetadata", () => {
+      if (!isFinite(p.duration)) return;
+      $("stats").textContent = $("stats").textContent.replace("--:--",
+        `${Math.floor(p.duration / 60)}:${String(Math.round(p.duration) % 60).padStart(2, "0")}`);
+    }, { once: true });
+  }
   p.play().catch(() => {});
   updateButtons();
   refreshGauge();
@@ -636,9 +664,38 @@ function show(t, replay) {
 
 function updateButtons() { $("prev").disabled = hist.length === 0 || pos === 0; }
 
+// ---------------------------------------------------------------- shuffle
+// off        — the radio as designed: freshest take off the spool
+// generated  — anything this station has made and still has on disk, so a
+//              take banked while you listen joins the pool on the next pick
+// all        — the above plus the music the station was built from
+const SHUFFLE_MODES = ["off", "generated", "all"];
+const SHUFFLE_LABEL = { off: "⤨ shuffle", generated: "⤨ made", all: "⤨ all" };
+let shuffleMode = localStorage.getItem("tapedeck.shuffle") || "off";
+
+function paintShuffle() {
+  const b = $("shuffle");
+  b.textContent = SHUFFLE_LABEL[shuffleMode];
+  b.classList.toggle("on", shuffleMode === "generated");
+  b.classList.toggle("all", shuffleMode === "all");
+  b.title = shuffleMode === "off" ? "off — play the freshest take (click to shuffle)"
+    : shuffleMode === "generated" ? "shuffling everything this station has generated"
+    : "shuffling generated takes AND your own library";
+}
+$("shuffle").onclick = () => {
+  shuffleMode = SHUFFLE_MODES[(SHUFFLE_MODES.indexOf(shuffleMode) + 1) % 3];
+  localStorage.setItem("tapedeck.shuffle", shuffleMode);
+  paintShuffle();
+  toast(shuffleMode === "off" ? "shuffle off"
+        : shuffleMode === "generated" ? "shuffling generated takes"
+        : "shuffling takes + your library");
+};
+paintShuffle();
+
 async function next() {
   if (pos >= 0 && pos < hist.length - 1) { pos++; show(hist[pos], true); return; }
-  const r = await fetch("/music_studio/next");
+  const r = await fetch(shuffleMode === "off" ? "/music_studio/next"
+                        : `/music_studio/shuffle?mode=${shuffleMode}`);
   const t = await r.json();
   if (t.empty) {
     $("title").textContent = "SYNTHESIZING TAPE…";
