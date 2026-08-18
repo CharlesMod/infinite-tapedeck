@@ -1188,6 +1188,20 @@ def generate(caption, lyrics, seed, max_duration, steps=None, eng=None):
         except Exception:
             continue
         if pid not in h:
+            # A restarted ComfyUI loses its queue and its history, so this id
+            # will never appear and polling it burns the full timeout — 20
+            # minutes of dead air for a server bounce. If the id is in neither
+            # history nor the queue, and the server is up enough to answer,
+            # the work is gone: say so and let the caller re-cut it.
+            try:
+                q = http_json(M3 + "/queue", timeout=5)
+                queued = any(pid in str(item) for item in
+                             (q.get("queue_running") or [])
+                             + (q.get("queue_pending") or []))
+            except Exception:
+                queued = True  # cannot tell: keep waiting rather than guess
+            if not queued and time.time() - t0 > 30:
+                return None, "prompt lost (server restarted?)"
             continue
         entry = h[pid]
         status = entry.get("status", {}).get("status_str")

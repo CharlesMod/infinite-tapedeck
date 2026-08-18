@@ -99,6 +99,18 @@
     35% { opacity: 1; } 100% { opacity: 0; transform: translateX(52px); } }
   #feed { stroke: #52405f; stroke-width: 3; fill: none; stroke-dasharray: 6 5;
           opacity: .25; }
+  /* stage indicator: same cyan as the feed it sits over, breathing so it
+     reads as live machinery rather than a static badge */
+  #stage { opacity: 0; transition: opacity .45s ease; }
+  #stage.on { opacity: 1; animation: stage-breathe 2.6s ease-in-out infinite; }
+  #stage-glyph { fill: none; stroke: var(--cyan); stroke-width: 2.2;
+                 stroke-linecap: round; stroke-linejoin: round;
+                 filter: drop-shadow(0 0 4px var(--cyan)); }
+  #stage-label { fill: var(--cyan); font-size: 8px; letter-spacing: .22em;
+                 text-anchor: middle; text-transform: uppercase; opacity: .8; }
+  @keyframes stage-breathe { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+  /* a verdict is a moment, not a state — it lands once and holds still */
+  #stage.verdict { animation: none; opacity: 1; }
   #mech.synth #feed { opacity: 1; stroke: var(--cyan);
     animation: feed-scroll 1.1s linear infinite; }
   @keyframes feed-scroll { to { stroke-dashoffset: -22; } }
@@ -370,6 +382,12 @@
         <div id="mech-wrap">
           <svg id="mech" viewBox="0 0 520 120" preserveAspectRatio="xMidYMid meet">
             <!-- digitizer: bits resolving into tape while the deck synthesizes -->
+            <!-- what the machine is doing right now, above the feed stream:
+                 VRAM and GPU util show that it is busy, never at what -->
+            <g id="stage" transform="translate(54 28)">
+              <path id="stage-glyph" d=""/>
+              <text id="stage-label" y="16">—</text>
+            </g>
             <g id="digitizer">
               <rect class="bit b1" x="14" y="52" width="4" height="9"/>
               <rect class="bit b2" x="26" y="57" width="4" height="9"/>
@@ -1079,6 +1097,50 @@ document.addEventListener("drop", async (e) => {
 
 /* --------------------------------------------------------- system meters */
 
+// ------------------------------------------------------- stage indicator
+// The deck shows VRAM and GPU util, so you can see the machine is busy but
+// never at what. The daemon narrates every decision into deckstate.msg, so
+// the stage is already knowable — this just draws it.
+const STAGES = {
+  // glyphs are small paths centred on 0,0 in the mech's own coordinates
+  writing:    { d: "M -7 6 L -3 5 L 7 -5 L 5 -7 L -5 3 Z M -7 6 L -5 3",
+                label: "writing" },
+  generating: { d: "M -9 0 L -6 -7 L -3 6 L 0 -9 L 3 5 L 6 -4 L 9 0",
+                label: "synthesizing" },
+  judging:    { d: "M -7 -7 A 9 9 0 0 1 -7 7 M -2 -3.5 A 4.5 4.5 0 0 1 -2 3.5",
+                label: "judging" },
+  banked:     { d: "M -7 0 L -2 5 L 8 -6", label: "banked" },
+  rejected:   { d: "M -6 -6 L 6 6 M 6 -6 L -6 6", label: "rejected" },
+  waiting:    { d: "M -4 -6 L -4 6 M 4 -6 L 4 6", label: "waiting" },
+  full:       { d: "M -8 4 L -3 -4 L 2 3 L 8 -5", label: "spool full" },
+};
+
+function stageFrom(msg) {
+  const m = (msg || "").toLowerCase();
+  if (m.includes("bundles")) return "writing";          // LLM residency
+  if (m.startsWith("generating")) return "generating";
+  if (m.includes("accept")) return "banked";
+  if (m.includes("reject")) return "rejected";
+  if (m.includes("holding") || m.includes("pause")) return "waiting";
+  if (m.includes("spool full")) return "full";
+  return null;
+}
+
+let stageNow = null;
+function paintStage(msg) {
+  const key = stageFrom(msg);
+  const g = $("stage");
+  if (!key) { g.classList.remove("on", "verdict"); stageNow = null; return; }
+  if (key !== stageNow) {
+    stageNow = key;
+    $("stage-glyph").setAttribute("d", STAGES[key].d);
+    $("stage-label").textContent = STAGES[key].label;
+  }
+  g.classList.add("on");
+  // accept/reject are events; everything else is an ongoing state
+  g.classList.toggle("verdict", key === "banked" || key === "rejected");
+}
+
 async function pollGpu() {
   try {
     const s = await (await fetch("/music_studio/gpu")).json();
@@ -1091,6 +1153,7 @@ async function pollGpu() {
   } catch (e) { /* server restarting */ }
   try {
     const d = await (await fetch("/music_studio/deckstate")).json();
+    paintStage(d.msg);
     // one card, one claimant: the digitizer runs ONLY while a take is
     // actually being synthesized — no more strobing on util noise
     $("mech").classList.toggle("synth", d.owner === "generation");
