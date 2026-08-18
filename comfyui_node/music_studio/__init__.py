@@ -49,6 +49,7 @@ AUDIO_EXTS = (".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".wma",
 
 FILE_RE = re.compile(r"^v\d+__\d+_\d+\.mp3$")
 FEEDBACK_MULT = {"keep": 1.10, "dislike": 0.85, "skip": 0.97}
+SPEED_WINDOW = 20             # takes averaged into the SPEED readout
 
 stations.ensure_registry()
 _last_vein = None
@@ -292,14 +293,20 @@ async def status(request):
             played_n += 1
             played_s += m.get("duration_s", 0.0)
     keepers = len(os.listdir(p["keepers"])) if os.path.isdir(p["keepers"]) else 0
-    # press speed: audio-seconds banked in the last hour vs wall clock —
-    # the honest ×realtime number, idle sag included
-    hour_ago = time.time() - 3600
-    pressed = sum(m.get("duration_s", 0.0) for m in recs.values()
-                  if m.get("created", 0) >= hour_ago)
+    # SPEED: audio-seconds produced per wall second of generation, over the
+    # most recent takes. The old "press speed" divided audio banked by the
+    # last hour of clock, which collapses to nothing whenever the spool is
+    # full and the daemon is deliberately idle — measured 0.12x over a window
+    # where generation was actually running at 0.82x. That made the number a
+    # report on how busy the radio chose to be, not on how fast it is.
+    timed = [m for m in recs.values() if m.get("gen_s")][-SPEED_WINDOW:]
+    audio = sum(m["duration_s"] for m in timed)
+    wall = sum(m["gen_s"] for m in timed)
+    speed = round(audio / wall, 2) if wall else None
     return web.json_response({
         "station": stations.active(),
-        "press_speed": round(pressed / 3600, 2),
+        "speed": speed,               # x realtime while generating
+        "speed_n": len(timed),        # takes the figure is averaged over
         "played": {"tracks": played_n, "minutes": round(played_s / 60, 1)},
         "veins": {v: {"name": c.get("name", f"Vein {v}"),
                       "tracks": per.get(v, {}).get("tracks", 0),
@@ -497,6 +504,9 @@ def _keeper_rows(p):
     for f in files:
         m = by_file.get(f, {})
         rows.append({
+            # the take id, so the deck can hand a keeper to show() exactly
+            # like any other track — it derives the display title from it
+            "id": m.get("id") or os.path.splitext(f)[0].split("__", 1)[-1],
             "file": f, "title": titles.get(f, ""),
             "vein": m.get("vein"), "vein_name": m.get("vein_name", "?"),
             "duration_s": m.get("duration_s"), "score": m.get("score"),
@@ -595,6 +605,58 @@ async def keeper_export(request):
             return web.json_response({"error": f"transcode failed: {e!r:.80}"},
                                      status=500)
     return web.FileResponse(dst, headers=headers)
+
+
+STEPS_FILE = f"{BASE}/radio/speed.json"
+STEPS_MIN, STEPS_MAX, STEPS_STEP, STEPS_DEFAULT = 20.0, 40.0, 2.5, 30.0
+
+
+def _round_half_up(v):
+    """Match the deck slider's Math.round: python's round() is banker's
+    rounding, so 22.5 would land on 22 while the UI showed 23."""
+    import math
+    return int(math.floor(float(v) + 0.5))
+
+
+def _steps():
+    try:
+        with open(STEPS_FILE) as f:
+            return max(STEPS_MIN, min(STEPS_MAX, float(json.load(f)["steps"])))
+    except (OSError, ValueError, TypeError, KeyError):
+        return STEPS_DEFAULT
+
+
+@PromptServer.instance.routes.get("/music_studio/speed")
+async def speed_get(request):
+    v = _steps()
+    return web.json_response({
+        "steps": v, "effective": _round_half_up(v),
+        "min": STEPS_MIN, "max": STEPS_MAX,
+        "step": STEPS_STEP, "default": STEPS_DEFAULT,
+    })
+
+
+@PromptServer.instance.routes.post("/music_studio/speed")
+async def speed_set(request):
+    """Move the speed/quality slider. The daemon re-reads this per take, so
+    it lands on the next generation rather than needing a restart."""
+    data = await request.json()
+    try:
+        v = float(data["steps"])
+    except (KeyError, TypeError, ValueError):
+        return web.json_response({"error": "steps must be a number"},
+                                 status=400)
+    # snap to the slider's own granularity so the file never holds a value
+    # the UI cannot represent
+    v = round(v / STEPS_STEP) * STEPS_STEP
+    v = max(STEPS_MIN, min(STEPS_MAX, v))
+    os.makedirs(os.path.dirname(STEPS_FILE), exist_ok=True)
+    tmp = STEPS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"steps": v}, f)
+    os.replace(tmp, STEPS_FILE)
+    return web.json_response({"ok": True, "steps": v,
+                              "effective": _round_half_up(v)})
 
 
 @PromptServer.instance.routes.get("/music_studio/stations")

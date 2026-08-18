@@ -221,6 +221,18 @@
             color: var(--cyan); text-shadow: 0 0 8px #00e5ff70; margin-bottom: .6rem; }
   .rail-sec { margin-bottom: 1.3rem; }
 
+  /* ---------------- speed / quality slider ---------------- */
+  #sp-row { margin-top: .55rem; }
+  #sp-head { display: flex; justify-content: space-between; align-items: baseline;
+             font-size: .58rem; color: var(--dim); letter-spacing: .1em; }
+  #sp-val { color: var(--vfd); font-variant-numeric: tabular-nums; }
+  #sp-slider { width: 100%; margin: .3rem 0 .1rem; accent-color: var(--vfd);
+               height: 1rem; cursor: pointer; }
+  #sp-ends { display: flex; justify-content: space-between;
+             font-size: .54rem; color: var(--dim); text-transform: uppercase;
+             letter-spacing: .12em; }
+  #sp-note { font-size: .54rem; color: var(--dim); margin-top: .2rem; }
+
   /* ---------------- keepers ---------------- */
   #kp-list { display: flex; flex-direction: column; gap: 2px;
              max-height: 190px; overflow-y: auto; }
@@ -474,10 +486,16 @@
           <div class="g-bar"><div class="g-fill" id="sys-vram"
             style="background:linear-gradient(90deg,var(--pink),var(--red))"></div></div>
           <span class="g-min" id="sys-vram-n">—</span></div>
-        <div class="g-row"><span class="g-name">PRESS</span>
-          <div class="g-bar"><div class="g-fill" id="sys-press"
+        <div class="g-row"><span class="g-name">SPEED</span>
+          <div class="g-bar"><div class="g-fill" id="sys-speed"
             style="background:var(--vfd)"></div></div>
-          <span class="g-min" id="sys-press-n">—</span></div>
+          <span class="g-min" id="sys-speed-n">—</span></div>
+        <div id="sp-row">
+          <div id="sp-head"><span>SPEED / QUALITY</span><span id="sp-val">30 steps</span></div>
+          <input type="range" id="sp-slider" min="20" max="40" step="2.5" value="30">
+          <div id="sp-ends"><span>← faster</span><span>quality →</span></div>
+          <div id="sp-note"></div>
+        </div>
         <div id="deck-line">DECK · <span id="deck-msg">listening for the daemon…</span></div>
       </div>
 
@@ -566,8 +584,12 @@ function show(t, replay) {
   const accent = VEIN_COLORS[t.vein] || "#888";
   document.documentElement.style.setProperty("--accent", accent);
   $("vein-name").textContent = t.vein_name;
+  // defensive: this used to be t.id.split("_")[1].slice(0,6), which threw on
+  // any track without an underscored id — and threw BEFORE the player src was
+  // set below, so the symptom was silence rather than an obvious error
+  const idPart = String(t.id || "").split("_")[1] || String(t.id || "");
   $("title").textContent = (t.replay ? "ARCHIVE · TAKE " : "TAKE ")
-    + t.id.split("_")[1].slice(0, 6);
+    + (idPart ? idPart.slice(0, 6) : (t.vein_name || "KEEPER").toUpperCase());
   $("stats").textContent =
     `${Math.floor(t.duration_s / 60)}:${String(Math.round(t.duration_s) % 60).padStart(2, "0")}` +
     ` · ${t.bpm} BPM · FIT ${t.score}` +
@@ -697,9 +719,21 @@ async function refreshGauge() {
     $("pack-take").setAttribute("r", 17 + Math.min(27, pl.tracks / 40 * 27));
     $("played-label").textContent =
       pl.tracks + " TAKES · " + pl.minutes.toFixed(0) + " MIN";
-    const ps = s.press_speed || 0;
-    $("sys-press").style.width = Math.min(100, ps / 1.1 * 100) + "%";
-    $("sys-press-n").textContent = ps.toFixed(2) + "×";
+    // SPEED is x-realtime while generating, averaged over recent takes —
+    // not audio banked per hour, which read near zero whenever the spool was
+    // full and the daemon was deliberately idle. 1.0x is the bar that matters:
+    // above it the radio outruns a listener, below it the spool drains.
+    const sp = s.speed;
+    if (sp == null) {
+      $("sys-speed").style.width = "0%";
+      $("sys-speed-n").textContent = "—";
+    } else {
+      $("sys-speed").style.width = Math.min(100, sp / 1.5 * 100) + "%";
+      $("sys-speed").style.background = sp >= 1 ? "var(--vfd)" : "var(--amber)";
+      $("sys-speed-n").textContent = sp.toFixed(2) + "×";
+      $("sys-speed-n").title = `${sp.toFixed(2)}x realtime over the last ` +
+        `${s.speed_n} take(s) — above 1.0x the radio outruns a listener`;
+    }
     const g = $("gauge");
     g.innerHTML = "";
     for (const [v, info] of Object.entries(s.veins)) {
@@ -1153,7 +1187,7 @@ function kpPlay() {
   const k = kpCurrent();
   if (!k) return;
   if ($("play").style.display !== "none") { $("play").style.display = "none"; initVU(); }
-  show({ id: null, vein: k.vein, vein_name: k.title || k.vein_name,
+  show({ id: k.id, vein: k.vein, vein_name: k.title || k.vein_name,
          url: k.url, duration_s: k.duration_s, bpm: k.bpm, score: k.score,
          caption: k.caption, lyrics: k.lyrics, keeper: true }, true);
   toast("playing a keeper");
@@ -1187,6 +1221,43 @@ $("kp-remove").onclick = async () => {
   kpSel = null; kpLoad();
 };
 kpLoad();
+
+// ------------------------------------------------------- speed/quality slider
+// Steps are the one honest speed lever: generation time is very nearly linear
+// in them, so this is a real trade rather than a preference. The daemon reads
+// the value per take, so a move lands on the next generation.
+let spDefault = 30;
+
+function spPaint(steps, eff) {
+  $("sp-val").textContent = (eff ?? Math.round(steps)) + " steps";
+  const d = steps - spDefault;
+  $("sp-note").textContent = !d ? "default"
+    : d < 0 ? `~${Math.round(-d / spDefault * 100)}% faster, lower fidelity`
+            : `~${Math.round(d / spDefault * 100)}% slower, higher fidelity`;
+}
+
+async function spLoad() {
+  try {
+    const d = await (await fetch("/music_studio/speed")).json();
+    spDefault = d.default;
+    const sl = $("sp-slider");
+    sl.min = d.min; sl.max = d.max; sl.step = d.step; sl.value = d.steps;
+    spPaint(d.steps, d.effective);
+  } catch {}
+}
+
+$("sp-slider").addEventListener("input", e => spPaint(parseFloat(e.target.value)));
+$("sp-slider").addEventListener("change", async e => {
+  const steps = parseFloat(e.target.value);
+  try {
+    const r = await (await fetch("/music_studio/speed", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ steps }) })).json();
+    spPaint(r.steps, r.effective);
+    toast(`${r.effective} steps — applies to the next take`);
+  } catch {}
+});
+spLoad();
 
 setInterval(refreshGauge, 30000);
 setInterval(pollCapture, 3000);

@@ -119,6 +119,30 @@ RELIEF_MAX = float(_cfg.get("relief_max", 0.05))
 _relief = {}                  # vein -> current threshold relief
 
 STEPS = int(_cfg["steps"])
+# The deck's speed/quality slider writes here, and it is read per take so a
+# move applies to the next generation without a restart. Steps are the only
+# honest speed lever left: measured 0.86x realtime at 30, and generation time
+# is very nearly linear in them. KSampler wants an int, so the slider's 2.5
+# granularity is rounded at graph time.
+STEPS_FILE = f"{BASE}/radio/speed.json"
+STEPS_MIN, STEPS_MAX, STEPS_STEP = 20.0, 40.0, 2.5
+
+
+def _round_half_up(v):
+    """int(round()) is banker's rounding in python: 22.5 -> 22 but 37.5 -> 38.
+    The deck's slider uses Math.round, which is always half-up, so the two
+    disagreed and the UI promised a step count the daemon did not use."""
+    import math
+    return int(math.floor(float(v) + 0.5))
+
+
+def load_steps():
+    try:
+        with open(STEPS_FILE) as f:
+            v = float(json.load(f)["steps"])
+        return max(STEPS_MIN, min(STEPS_MAX, v))
+    except (OSError, ValueError, TypeError, KeyError):
+        return float(STEPS)
 DIT_MODEL = _cfg.get("dit_model", "minimax_music3_dit_fp16.safetensors")
 # TWO different guidance knobs, which shared one constant purely because this
 # file had one named CFG. KSampler's cfg guides the DiT's diffusion; the text
@@ -1408,8 +1432,10 @@ def main():
         # realtime that trading quality for it never bought the radio much —
         # and every take it cheapened was one heard while the spool was thin,
         # i.e. exactly when the listener is most likely to be waiting on it.
-        steps_now = STEPS
-        mode = f" steps={steps_now}"
+        steps_wanted = load_steps()
+        steps_now = _round_half_up(steps_wanted)
+        mode = (f" steps={steps_now}" if steps_wanted == steps_now
+                else f" steps={steps_now} (slider {steps_wanted:g})")
         log(f"generating: vein={card['name']} bpm={bpm} "
             f"len<={target_s}s seed={seed} lyrics={lyr_mode}"
             f" top_k={eng['top_k']} arcfg={eng['ar_cfg']}{mode}")
@@ -1422,7 +1448,9 @@ def main():
             unload_llm()
         # max_duration is a cap the encoder undershoots — never let it bind;
         # length is driven by the caption's stated duration and arc instead
+        t_gen = time.time()
         path, status = generate(caption, lyrics, seed, 300, steps_now, eng)
+        gen_s = round(time.time() - t_gen, 1)
         if not path:
             # Failure class: a hung ComfyUI holds queue_running forever and
             # every cycle burns a 20-minute timeout — slow-motion freeze.
@@ -1482,6 +1510,10 @@ def main():
                         "score": round(score, 3), "threshold": round(thr, 3),
                         "relief": round(_relief.get(vein, 0.0), 3),
                         "bpm": bpm, "seed": seed, "steps": steps_now,
+                        # wall seconds this take spent generating, so speed is
+                        # a measured ratio rather than one inferred from log
+                        # timestamps: duration_s / gen_s is the real x-realtime
+                        "gen_s": gen_s,
                         # banked with the take so a listener's keep/skip can
                         # later be read back against the settings that made it
                         "engine": eng,
@@ -1498,7 +1530,8 @@ def main():
                                 vein_name=card["name"], ok=True,
                                 score=round(score, 3), thr=round(thr, 3),
                                 dur=round(dur), why=why)
-                log(f"ACCEPT {card['name']} {dur:.0f}s score {score:.3f} "
+                log(f"ACCEPT {card['name']} {dur:.0f}s in {gen_s:.0f}s "
+                    f"({dur / max(gen_s, 1e-6):.2f}x) score {score:.3f} "
                     f"(thr {thr:.3f}) -> {os.path.basename(dest)}"
                     + (f" — bar restored to {thr_base:.3f}" if eased else ""))
             else:
