@@ -208,6 +208,14 @@ Re-run the capture after either — cards are rebuilt from what is on disk.
   much less picky, `0.0` disables the learned bar entirely and uses only the
   corpus bar. `critic_floor` (default `0.45`) is the absolute similarity
   below which a take is never banked, whatever the learned bar says.
+- `caption_max_input_s` (default: chosen from free VRAM): how many seconds of
+  a long track the listening pass describes in one go. The 8-bit model's
+  weights are a fixed ~7.7 GB; its activations for a 360-second clip measured
+  ~5.2 GB, so this is the one part of the footprint you control, and audio
+  tokens scale with duration while attention scales worse. On a 16 GB card
+  shared with a desktop the pass picks 360s down to 180s from what is actually
+  free at start; set this to pin it. A three-minute cut still tells the model
+  the genre, the instruments and the arc, which is all a caption is for.
 - `caption_vram_headroom_mb` (default `1400`): VRAM the listening pass always
   leaves free. Without it Flamingo grows into the last byte of the card and
   ComfyUI can no longer start at all — it needs a few hundred MB just to

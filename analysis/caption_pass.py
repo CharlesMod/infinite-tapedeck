@@ -63,7 +63,9 @@ except (OSError, ValueError):
 VRAM_HEADROOM_MB = int(_cfg.get("caption_vram_headroom_mb", 1400))
 MODEL = "nvidia/music-flamingo-2601-hf"
 EXTS = (".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav")
-MAX_INPUT_S = 360  # >6 min tracks: middle 6 minutes is the representative cut
+# The middle N seconds of a long track: the representative cut. This is a
+# ceiling, not a constant — see clip_seconds().
+MAX_INPUT_S = int(_cfg.get("caption_max_input_s", 0)) or 360
 
 PROMPT = (
     "Describe this music in rich, specific prose for a producer who will "
@@ -183,6 +185,30 @@ CONTEXT_MB = 500  # roughly what ComfyUI needs just to create a CUDA context
 WANT_CARD = f"{BASE}/radio/WANT_CARD"
 
 
+def clip_seconds(free_mb):
+    """How much audio to describe at once, given the room actually available.
+
+    Weights are ~7.7 GB in 8-bit and fixed; activations for a 360s clip
+    measured ~5.2 GB, i.e. 40% of the footprint and the only part we control.
+    Audio tokens scale with duration and attention is quadratic in sequence
+    length, so shortening the cut is worth far more than it costs — a
+    three-minute excerpt still tells you the genre, the instruments and the
+    arc, which is all the caption is for.
+
+    A 16 GB card is the stated target, and on a GUI desktop several hundred MB
+    of it belongs to the compositor and the browser before this pass starts.
+    Windows reserves more again. So pick from what is free right now rather
+    than assuming the machine this was written on."""
+    if _cfg.get("caption_max_input_s"):
+        return MAX_INPUT_S  # pinned by config: the user's call, not ours
+    if free_mb is None:
+        return MAX_INPUT_S
+    for need, clip in ((14000, 360), (13000, 300), (12500, 240), (0, 180)):
+        if free_mb >= need:
+            return min(MAX_INPUT_S, clip)
+    return MAX_INPUT_S
+
+
 def free_the_card():
     """An idle queue is not an idle card — ComfyUI holds model weights
     between jobs, and Flamingo cannot load into what is left. Ask each
@@ -263,6 +289,12 @@ def main():
         while queue_busy():
             time.sleep(15)
         free = free_the_card()
+        clip_s = clip_seconds(free)
+        if clip_s < MAX_INPUT_S:
+            print(f"{free} MB free — describing {clip_s}s of each long track "
+                  f"instead of {MAX_INPUT_S}s, to stay inside the card. "
+                  "Pin with caption_max_input_s if you would rather not.",
+                  flush=True)
         if free is not None:
             print(f"{free} MB VRAM free after unloading the generator",
                   flush=True)
@@ -344,7 +376,7 @@ def main():
                                             offset=off, duration=ceiling)[0]
                     return librosa.load(path, sr=sr, mono=True)[0]
 
-                y = _load(MAX_INPUT_S)
+                y = _load(clip_s)
                 # a NaN, inf, or out-of-range sample can trip a device-side
                 # assert that poisons the CUDA context for every later track
                 y = np.clip(np.nan_to_num(y, nan=0.0, posinf=1.0,
@@ -360,8 +392,7 @@ def main():
                 text = None
                 last_ceiling = None
                 for attempt, ceiling in enumerate(
-                        (MAX_INPUT_S, MAX_INPUT_S,
-                         MAX_INPUT_S // 2, MAX_INPUT_S // 3)):
+                        (clip_s, clip_s, clip_s // 2, clip_s // 3)):
                     if attempt:
                         torch.cuda.empty_cache()
                         if ceiling != last_ceiling:
@@ -395,7 +426,7 @@ def main():
                         continue
                 if text is None:
                     raise MemoryError(
-                        f"out of memory even at {MAX_INPUT_S // 3}s of audio")
+                        f"out of memory even at {clip_s // 3}s of audio")
 
                 with open(OUT, "a") as f:
                     f.write(json.dumps({
