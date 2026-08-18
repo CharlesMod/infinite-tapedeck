@@ -122,11 +122,11 @@ _relief = {}                  # vein -> current threshold relief
 STEPS = int(_cfg["steps"])
 # The deck's speed/quality slider writes here, and it is read per take so a
 # move applies to the next generation without a restart. Steps are the only
-# honest speed lever left: measured 0.86x realtime at 30, and generation time
-# is very nearly linear in them. KSampler wants an int, so the slider's 2.5
-# granularity is rounded at graph time.
+# honest speed lever left: measured 0.86x realtime at 30 steps and 0.98x at
+# 25, with generation time very nearly linear in them — so it is worth being
+# able to dial precisely. One step per notch; KSampler wants an int anyway.
 STEPS_FILE = f"{BASE}/radio/speed.json"
-STEPS_MIN, STEPS_MAX, STEPS_STEP = 20.0, 40.0, 2.5
+STEPS_MIN, STEPS_MAX, STEPS_STEP = 20.0, 40.0, 1.0
 # Target song length, also from the deck. 0 means "use each vein's own
 # measured length envelope", which is the default and usually the right
 # answer — the envelope comes from how long the tracks in that vein actually

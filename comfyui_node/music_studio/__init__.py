@@ -693,7 +693,7 @@ async def keeper_export(request):
 
 
 STEPS_FILE = f"{BASE}/radio/speed.json"
-STEPS_MIN, STEPS_MAX, STEPS_STEP, STEPS_DEFAULT = 20.0, 40.0, 2.5, 30.0
+STEPS_MIN, STEPS_MAX, STEPS_STEP, STEPS_DEFAULT = 20.0, 40.0, 1.0, 30.0
 LEN_MIN, LEN_MAX, LEN_STEP = 60.0, 300.0, 15.0   # 0 = use the vein's envelope
 
 
