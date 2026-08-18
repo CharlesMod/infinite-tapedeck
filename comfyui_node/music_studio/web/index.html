@@ -383,7 +383,7 @@
   <div id="layout">
 
     <div class="panel" id="card">
-      <div id="cassette">
+      <div id="cassette" title="The transport. Reels turn while a take plays, the tape counter runs, and the glyph above the feed shows which stage of the machine is running: writing captions, synthesizing, judging, or banking the result.">
         <div id="tape-label">
           <span id="vein-name">insert tape</span>
           <span id="side">SIDE ∞ · CrO₂ · TYPE IV</span>
@@ -442,34 +442,34 @@
              centres in the window, so labels inside it floated ~90px above the
              cassette floor once the window grew. As markup they pin to the
              bottom whatever height the panel takes. -->
-        <div id="spool-row">
+        <div id="spool-row" title="Left: how much approved audio is waiting on the spool. Right: how much you have listened to from this station.">
           <span id="spool-label">0 TAKES · 0 MIN</span>
           <span id="played-label">0 TAKES · 0 MIN</span>
         </div>
       </div>
 
-      <div id="vfd">
+      <div id="vfd" title="What is playing: the vein it came from, its length, tempo and how closely it matched your music. Tap the description or the lyrics to expand them.">
         <div id="title">PRESS PLAY</div>
         <div id="stats">the deck winds fresh tape while you listen</div>
         <div id="desc" title="tap to expand"></div>
         <div id="lyrics" title="tap for the full lyric sheet"></div>
       </div>
 
-      <div id="vu">
+      <div id="vu" title="Left and right output level, in dBFS on a shared scale — so the two can honestly be compared. They rise instantly and fall slowly, like the real thing.">
         <span class="vu-ch">L</span><div class="vu-rail"><div class="vu-fill" id="vu-l"></div></div>
         <span class="vu-ch">R</span><div class="vu-rail"><div class="vu-fill" id="vu-r"></div></div>
       </div>
 
       <audio id="player" controls preload="auto" crossorigin="anonymous"></audio>
       <div id="buttons">
-        <button id="play">▶ PLAY</button>
+        <button id="play" title="Start the radio. It serves approved takes off the spool, avoids playing the same vein twice in a row, and keeps generating in the background while you listen.">▶ PLAY</button>
         <button id="prev" title="back through what already played" disabled>⏮ prev</button>
         <button id="skip" title="not right now — mild signal">⏭ next</button>
         <button id="dislike" title="less of this vein — strong signal">✕ dislike</button>
         <button id="keep" title="save forever + more of this vein">★ keep</button>
         <button id="shuffle" title="off · generated · everything">⤨ shuffle</button>
       </div>
-      <div id="gauge"></div>
+      <div id="gauge" title="How the spool is divided between veins, and how your keep and dislike votes have re-weighted them. A vein you keep from grows; one you dislike shrinks."></div>
       <div id="foot">next = "not now" · dislike = "less of this" · keep = saved
         forever · <a href="import.html">dubbing bay</a></div>
     </div>
@@ -477,35 +477,38 @@
     <div class="panel" id="rail">
       <span class="plate">RACK UNIT · STATIONS</span>
       <div class="rail-sec">
-        <div class="rail-h">Station</div>
-        <select id="station-sel"></select>
-        <button class="small-btn" id="new-station">+ new station from folder</button>
+        <div class="rail-h" title="The folder of music this radio is modelled on. Everything below — the spool, the critic, the keepers — belongs to whichever station is selected here."
+             >Station</div>
+        <select id="station-sel" title="Which folder of music this radio is modelled on. Each station has its own taste model, spool, keepers and feedback — switching changes all of them."></select>
+        <button class="small-btn" id="new-station" title="Point the radio at another folder of music. It becomes its own station and starts analysing straight away.">+ new station from folder</button>
         <div id="new-form">
-          <input type="text" id="ns-name" placeholder="Station name (the mood)">
-          <input type="text" id="ns-path" placeholder="/path/to/folder/of/songs">
+          <input type="text" id="ns-name" placeholder="Station name (the mood)" title="What to call this station in the deck. Anything you like — it does not have to match the folder name.">
+          <input type="text" id="ns-path" placeholder="/path/to/folder/of/songs" title="Absolute path to a folder of audio files. Everything inside it, subfolders included, becomes this station's taste.">
           <div class="row">
-            <input type="checkbox" id="ns-captions" checked>
+            <input type="checkbox" id="ns-captions" checked title="Have an AI listen to every track and describe it. Slower, and the single biggest quality difference — without it the generator only knows tempo and brightness, not genre or instruments.">
             <label for="ns-captions">listen to every track and describe it
               — recommended, this is what makes generated songs match the
               station (~15 s/track, resumable, yields to the radio)</label>
           </div>
-          <button class="small-btn" id="ns-create">Create &amp; capture</button>
+          <button class="small-btn" id="ns-create" title="Create the station and start analysing it. The capture is resumable — you can close the deck and it carries on.">Create &amp; capture</button>
         </div>
       </div>
 
       <div class="rail-sec">
-        <div class="rail-h">Setlist <span id="sl-src" style="text-transform:none;letter-spacing:0;color:#14663f"></span></div>
+        <div class="rail-h" title="The source tracks this station learned from. Analysed files show tempo and key; unanalysed ones are waiting for the next capture. Excluding a track keeps the file but drops it from the taste model."
+             >Setlist <span id="sl-src" style="text-transform:none;letter-spacing:0;color:#14663f"></span></div>
         <div id="sl-tools">
-          <input type="text" id="sl-filter" placeholder="filter…">
+          <input type="text" id="sl-filter" placeholder="filter…" title="Narrow the setlist by title, artist or folder.">
           <button id="sl-refresh" title="rescan the folder for changes">⟳</button>
-          <button id="sl-capture">▶ capture</button>
+          <button id="sl-capture" title="Analyse this station's folder again. Only new or changed files are processed, so re-running after adding music is cheap.">▶ capture</button>
         </div>
         <div id="setlist"></div>
         <div id="sl-count"></div>
       </div>
 
       <div class="rail-sec">
-        <div class="rail-h">System</div>
+        <div class="rail-h" title="What the machine is doing. GPU and VRAM show it is busy; SPEED shows how fast takes are actually being produced, in multiples of realtime — above 1.0x the radio outruns a listener."
+             >System</div>
         <div class="g-row"><span class="g-name">GPU</span>
           <div class="g-bar"><div class="g-fill" id="sys-gpu"
             style="background:var(--amber)"></div></div>
@@ -519,39 +522,41 @@
             style="background:var(--vfd)"></div></div>
           <span class="g-min" id="sys-speed-n">—</span></div>
         <div id="sp-row">
-          <div id="sp-head"><span>SPEED / QUALITY</span><span id="sp-val">30 steps</span></div>
-          <input type="range" id="sp-slider" min="20" max="40" step="2.5" value="30">
+          <div id="sp-head" title="Diffusion steps per take — the one setting that trades speed against fidelity directly."><span>SPEED / QUALITY</span><span id="sp-val">30 steps</span></div>
+          <input type="range" id="sp-slider" min="20" max="40" step="1" value="30" title="Diffusion steps per take. Fewer is faster and rougher, more is slower and cleaner — generation time is close to linear in this. Watch SPEED above: over 1.0x the radio outruns a listener.">
           <div id="sp-ends"><span>← faster</span><span>quality →</span></div>
           <div id="sp-note"></div>
-          <div id="sp-head" style="margin-top:.5rem"><span>SONG LENGTH</span><span id="ln-val">vein default</span></div>
-          <input type="range" id="ln-slider" min="45" max="300" step="15" value="45">
+          <div id="sp-head" style="margin-top:.5rem" title="How long takes should aim to be. The generator frequently stops early, so this is an aim, not a promise."><span>SONG LENGTH</span><span id="ln-val">vein default</span></div>
+          <input type="range" id="ln-slider" min="45" max="300" step="15" value="45" title="How long to aim for. Leftmost lets each vein use the length of its own source tracks, which is usually the right answer. The model often ends early regardless, so treat this as an aim rather than a guarantee.">
           <div id="sp-ends"><span>shorter</span><span>longer →</span></div>
         </div>
         <div id="deck-line">DECK · <span id="deck-msg">listening for the daemon…</span></div>
       </div>
 
       <div class="rail-sec">
-        <div class="rail-h">Keepers
+        <div class="rail-h" title="Takes you pressed KEEP on. They survive the janitor forever, and can be replayed, renamed and exported. Select one to enable the controls."
+             >Keepers
           <span id="kp-count" style="text-transform:none;letter-spacing:0;
             color:var(--dim);float:right"></span>
         </div>
         <div id="kp-empty">Nothing kept yet — press ★ keep on a track you like.</div>
         <div id="kp-list"></div>
         <div id="kp-actions">
-          <button id="kp-play" disabled>▶ play</button>
-          <button id="kp-rename" disabled>rename</button>
-          <select id="kp-fmt" disabled>
+          <button id="kp-play" title="Play the selected keeper on the deck. It will not roll on into the radio afterwards — press PLAY for that." disabled>▶ play</button>
+          <button id="kp-rename" title="Give this take a name. Stored alongside the file rather than renaming it, and used as the filename when you export." disabled>rename</button>
+          <select id="kp-fmt" title="Export format. MP3 is the file as generated; WAV and FLAC are converted losslessly from it — neither adds detail the MP3 does not already have." disabled>
             <option value="mp3">MP3</option>
             <option value="wav">WAV</option>
             <option value="flac">FLAC</option>
           </select>
-          <button id="kp-export" disabled>export</button>
+          <button id="kp-export" title="Download the selected keeper under its own name, in the format on the left." disabled>export</button>
           <button id="kp-remove" disabled title="drop the permanent copy">✕</button>
         </div>
       </div>
 
       <div class="rail-sec">
-        <div class="rail-h">Critic
+        <div class="rail-h" title="Every take is scored against this station&#39;s own music before you hear it, and rejects are deleted. This is the only record they existed. Stricter accepts fewer and closer takes; looser banks more."
+             >Critic
           <span id="cr-rate" style="text-transform:none;letter-spacing:0;
             color:var(--dim);float:right"></span>
         </div>
@@ -567,7 +572,8 @@
       </div>
 
       <div class="rail-sec" style="margin-bottom:0">
-        <div class="rail-h">Dubbing
+        <div class="rail-h" title="The AI listening pass, which describes each of your tracks so the generator knows more than tempo and brightness. Pause it to hand the GPU back to the radio; it resumes where it stopped."
+             >Dubbing
           <button id="dub-toggle" title="pause / resume the capture" disabled>⏵</button>
         </div>
         <div id="cap-state">no capture running</div>
