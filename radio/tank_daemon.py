@@ -94,7 +94,7 @@ INSTRUMENTAL_FORMS = {
 }
 
 
-def structural_tags(target_s, form=None):
+def structural_tags(target_s, form=None, arc=None):
     """Tag-only lyric sheet for instrumentals. The lyric vein outperforms
     because section tags are executable structure and structure is length —
     so every vein gets the scaffold, without putting words in its mouth."""
@@ -103,6 +103,14 @@ def structural_tags(target_s, form=None):
     cycle = INSTRUMENTAL_FORMS[name]
     want = max(2, mins + 1)
     body = [cycle[i % len(cycle)] for i in range(want)]
+    if arc == "builds_to_end":
+        # No [outro]. An outro is a taper by convention, and it sat directly
+        # after a caption asking the piece to peak at the end — measured, the
+        # tag won: 1 of 20 takes actually built to the end where 4 were
+        # expected. End on the loudest thing the form has instead.
+        peak = "drop" if "drop" in cycle else "instrumental"
+        return "\n\n".join(["[intro]"] + [f"[{s}]" for s in body]
+                            + [f"[{peak}]"])
     return "\n\n".join(["[intro]"] + [f"[{s}]" for s in body] + ["[outro]"])
 # Adaptive bar (Dean's design): every critic reject eases that vein's bar a
 # little so dead air self-limits; the next accept snaps it back to the
@@ -112,8 +120,6 @@ RELIEF_MAX = float(_cfg.get("relief_max", 0.05))
 _relief = {}                  # vein -> current threshold relief
 
 STEPS = int(_cfg["steps"])
-STARVED_STEPS = int(_cfg.get("starved_steps", 20))
-STARVED_BELOW_TAKES = int(_cfg.get("starved_below_takes", 5))
 DIT_MODEL = _cfg.get("dit_model", "minimax_music3_dit_fp16.safetensors")
 # TWO different guidance knobs, which shared one constant purely because this
 # file had one named CFG. KSampler's cfg guides the DiT's diffusion; the text
@@ -132,7 +138,12 @@ TOP_K = 50                    # kept as the fallback when jitter is disabled
 # for every take ever generated. Set either range to a pair of equal numbers
 # to pin it.
 AR_CFG_RANGE = (1.4, 1.8)
-AR_TOP_K_RANGE = (40, 120)
+# Upper bound pulled back from 120 after measuring stubs against it: 0 stubs
+# in 19 takes below top_k 80, 4 in 19 at or above it. The stop token is drawn
+# from the same distribution top_k widens, so a wider net makes an early stop
+# likelier — plausible mechanism, but n is small and the split is only
+# suggestive (Fisher ~0.1), so this is a provisional bound, not a finding.
+AR_TOP_K_RANGE = (40, 80)
 TANK_TARGET_S = int(_cfg["tank_target_s"])
 FOREIGN_VRAM_MB = 3000        # non-ComfyUI VRAM above this = game running
 LOOP_SLEEP = 60               # between top-up checks when tank is full/held
@@ -438,19 +449,24 @@ def fallback_caption(vein, card):
     # every vein has the same shape for anyone running without one. Swap the
     # baked phrase for this take's roll. Hand-tuned seeds do not use these
     # exact phrases, so they are left untouched by design.
-    arc = sample_arc(env)
+    arc_shape, arc = sample_arc(env)
     if arc:
         for phrase in ARC_PHRASES.values():
             if phrase != arc and phrase in seed_caption:
                 seed_caption = seed_caption.replace(phrase, arc)
                 break
+    if arc_shape == "builds_to_end":
+        # the seed's own Global Metadata promises an outro; say plainly that
+        # this take does not have one, or the taper wins here too
+        seed_caption += (" The final section is the loudest point and does "
+                         "not fade.")
     # without an LLM this seed is the only caption there is, so the technique
     # roll has to reach it here or those installs get none at all
     seed_caption = seed_caption.rstrip()
     if seed_caption.endswith("."):
         seed_caption = seed_caption[:-1]
     seed_caption += f", built around {random.choice(TECHNIQUES)}."
-    return seed_caption, bpm, target_s
+    return seed_caption, bpm, target_s, arc_shape
 
 
 def load_bundle_queue(slug):
@@ -629,17 +645,18 @@ def refill_bundles(cards, per, per_n, count, weights_path, p):
     for v in picks:
         card = cards[v]
         if freed:
-            caption, bpm, target_s = sample_caption(v, card)
+            caption, bpm, target_s, arc_shape = sample_caption(v, card)
         else:
             # unfreed card: never wake the LLM into a VRAM squeeze —
             # seed captions keep the radio fed until the card clears
-            caption, bpm, target_s = fallback_caption(v, card)
+            caption, bpm, target_s, arc_shape = fallback_caption(v, card)
         lyr = ((sample_lyrics(card) if freed else "")
-               if v in lv else structural_tags(target_s))
+               if v in lv else structural_tags(target_s, arc=arc_shape))
         # uses=2: one caption composes two different songs (the encoder seed
         # is the composer), halving residency demand at zero quality cost
         out.append({"vein": v, "caption": caption, "lyrics": lyr,
-                    "bpm": bpm, "target_s": target_s, "uses": 2})
+                    "bpm": bpm, "target_s": target_s, "uses": 2,
+                    "arc": arc_shape})
     if freed:
         unload_llm()
     return out
@@ -680,10 +697,10 @@ def sample_arc(env):
     shapes = (env or {}).get("energy_shapes")
     stated = (env or {}).get("energy_arc", "")
     if not shapes:
-        return stated
+        return (env or {}).get("energy_arc_shape", ""), stated
     labels = [s for s in shapes if shapes[s] > 0]
     if not labels:
-        return stated
+        return (env or {}).get("energy_arc_shape", ""), stated
     pick = random.choices(labels, weights=[shapes[s] for s in labels])[0]
     # A hand-written arc describes this vein's usual shape, and does it far
     # better than the three generic phrases here ("verse restraint → chorus
@@ -699,8 +716,8 @@ def sample_arc(env):
         # card may say outright with energy_arc_shape.
         if pick == (env.get("energy_arc_shape")
                     or max(shapes, key=shapes.get)):
-            return stated
-    return ARC_PHRASES.get(pick, stated)
+            return pick, stated
+    return pick, ARC_PHRASES.get(pick, stated)
 
 
 # The negative lookahead does the work a trailing \b cannot: \b sits between
@@ -782,12 +799,19 @@ def sample_caption(vein, card):
     bpm = random.randint(int(env["bpm"][0]), int(env["bpm"][1]))
     key = sample_key(env)
     axes = random.sample(card["mutation_axes"], k=min(2, len(card["mutation_axes"])))
-    arc = sample_arc(env)
+    arc_shape, arc = sample_arc(env)
     technique = random.choice(TECHNIQUES)
     lo, hi = card["envelope"]["length_s"]
     target_s = random.randint(int(lo), int(hi))
 
     mins = target_s // 60
+    # Precomputed, not spliced into the prompt's concatenation chain: a bare
+    # conditional in the middle of implicit string joining is a syntax error
+    # waiting to happen, and this line only appears for one arc.
+    no_fade = ("THE END IS THE PEAK: the final section is the loudest, "
+               "fullest point of the piece. Do not describe a fade, a "
+               "wind-down or a gentle close — it finishes at full strength.\n"
+               if arc_shape == "builds_to_end" else "")
     prompt = (
         "You write captions for a music generation model. The caption format "
         "has exactly three sections, like this example:\n\n"
@@ -810,6 +834,7 @@ def sample_caption(vein, card):
         # piece should DO, and it loses to instrument choice when they compete
         f"TECHNIQUE — build the arrangement around this and name where it "
         f"happens: {technique}.\n"
+        f"{no_fade}"
         "Do not mention any real artist, band, game, or song name. "
         "Output ONLY the caption text, three sections, no commentary."
     )
@@ -817,7 +842,7 @@ def sample_caption(vein, card):
         text = llm_chat(prompt, temperature=1.0, max_tokens=700)
         if text and all(h in text for h in
                         ("Global Metadata:", "Vocal Details:", "Arrangement:")):
-            return text, bpm, target_s
+            return text, bpm, target_s, arc_shape
     log("caption fallback: using card seed")
     # seeds predate the length discipline. Inject the duration INTO Global
     # Metadata — trailing it after the outro description reads as post-song
@@ -827,7 +852,7 @@ def sample_caption(vein, card):
         f"Global Metadata: An approximately {mins}-minute piece with a "
         "complete multi-section arc — intro, themes, development, peak, "
         "reprise — before its outro. ", 1)
-    return seed_caption, bpm, target_s
+    return seed_caption, bpm, target_s, arc_shape
 
 
 def sample_lyrics(card):
@@ -1304,12 +1329,13 @@ def main():
                 # that historically lands, and get audio moving
                 vein = best_accepting_vein(cards, p["meta"])
                 card = cards[vein]
-                caption, bpm, target_s = fallback_caption(vein, card)
+                caption, bpm, target_s, arc_shape = fallback_caption(vein, card)
                 log(f"EMERGENCY take for waiting listener: {card['name']}")
                 bundles = [{"vein": vein, "caption": caption,
-                            "lyrics": structural_tags(target_s),
+                            "lyrics": structural_tags(target_s,
+                                                      arc=arc_shape),
                             "bpm": bpm, "target_s": target_s,
-                            "station": slug}]
+                            "arc": arc_shape, "station": slug}]
             else:
                 log(f"writing {CAPTION_BATCH} bundles (LLM residency)")
                 bundles = refill_bundles(cards, per, per_n, count,
@@ -1360,12 +1386,13 @@ def main():
         # First takes into an empty spool are the showcase pair — full
         # quality, always: an empty queue is the demo moment (Dean's rule).
         # Catch-up steps apply only between the wow pair and a healthy spool.
-        showcase = count < 2
-        starved = count < STARVED_BELOW_TAKES
-        steps_now = STEPS if (showcase or not starved) else STARVED_STEPS
-        mode = (" steps=30 (showcase)" if showcase and starved
-                else f" steps={STARVED_STEPS} (catch-up)"
-                if steps_now != STEPS else "")
+        # Always full quality. The catch-up lever dropped a starved spool to
+        # STARVED_STEPS to refill faster, but generation is far enough below
+        # realtime that trading quality for it never bought the radio much —
+        # and every take it cheapened was one heard while the spool was thin,
+        # i.e. exactly when the listener is most likely to be waiting on it.
+        steps_now = STEPS
+        mode = f" steps={steps_now}"
         log(f"generating: vein={card['name']} bpm={bpm} "
             f"len<={target_s}s seed={seed} lyrics={lyr_mode}"
             f" top_k={eng['top_k']} arcfg={eng['ar_cfg']}{mode}")
@@ -1441,6 +1468,10 @@ def main():
                         # banked with the take so a listener's keep/skip can
                         # later be read back against the settings that made it
                         "engine": eng,
+                        # what shape this take was ASKED for, so the audio can
+                        # later be measured against the request rather than
+                        # against an aggregate
+                        "arc_requested": b.get("arc"),
                         "caption": caption, "lyrics": lyrics,
                         "created": int(time.time()), "consumed": False,
                     }) + "\n")
