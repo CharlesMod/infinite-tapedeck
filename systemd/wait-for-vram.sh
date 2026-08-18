@@ -52,9 +52,13 @@ while :; do
         exit 0
     fi
     if [ "$waited" = 0 ]; then
-        echo "wait-for-vram: only ${free} MB free, need ${NEED_MB} — asking the listening pass to make room"
+        echo "wait-for-vram: only ${free} MB free, need ${NEED_MB} — asking the other tenants to make room"
         mkdir -p "$(dirname "$WANT")" 2>/dev/null || true
         : > "$WANT" 2>/dev/null || true
+        # The lyricist is the third tenant on this card and has its own
+        # unload endpoint. It would fall off by itself once its ttl expires,
+        # but waiting out someone else's idle timer is not coordination.
+        curl -s -m 65 "${LLM_BASE:-http://127.0.0.1:8080}/unload" >/dev/null 2>&1 || true
     fi
     sleep "$INTERVAL"
     waited=$((waited + INTERVAL))

@@ -61,6 +61,12 @@ except (OSError, ValueError):
 # dub finished. The captioner is *designed* to run alongside the music server,
 # so it is the captioner's job to stay small enough for that to be true.
 VRAM_HEADROOM_MB = int(_cfg.get("caption_vram_headroom_mb", 1400))
+# The third tenant. One card hosts the generator, this pass, and the lyricist,
+# and each is supposed to hand it over on request — but this pass only ever
+# knew how to evict the generator. A resident Gemma is ~4 GB against Flamingo's
+# ~13, which on a 16 GB card is the difference between running and refusing to
+# start. It has an /unload endpoint; use it rather than giving up.
+LLM_URL = (_cfg.get("llm_base") or "http://127.0.0.1:8080").rstrip("/") or None
 MODEL = "nvidia/music-flamingo-2601-hf"
 EXTS = (".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav")
 # The middle N seconds of a long track: the representative cut. This is a
@@ -209,11 +215,50 @@ def clip_seconds(free_mb):
     return MAX_INPUT_S
 
 
+def llm_resident_mb():
+    """VRAM held by llama-server children, if any."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,used_memory",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5).stdout
+        total = 0
+        for line in out.strip().splitlines():
+            pid_s, mem_s = line.split(",")
+            try:
+                with open(f"/proc/{int(pid_s)}/cmdline", "rb") as f:
+                    if b"llama-server" in f.read():
+                        total += int(mem_s)
+            except (OSError, ValueError):
+                continue
+        return total
+    except Exception:
+        return 0
+
+
+def unload_llm():
+    """Ask the lyricist off the card. Same handshake the tank daemon uses."""
+    if not LLM_URL or llm_resident_mb() < 500:
+        return
+    print("evicting the lyricist before loading Flamingo", flush=True)
+    try:
+        urllib.request.urlopen(LLM_URL + "/unload", timeout=65).read()
+    except Exception:
+        pass
+    for _ in range(10):
+        if llm_resident_mb() < 500:
+            return
+        time.sleep(2)
+    print("lyricist did not unload — continuing, the pass may be tight",
+          flush=True)
+
+
 def free_the_card():
     """An idle queue is not an idle card — ComfyUI holds model weights
     between jobs, and Flamingo cannot load into what is left. Ask each
     server to drop its weights, then wait for the VRAM to actually come
     back before committing to an 8-bit load."""
+    unload_llm()
     for host in SERVERS:
         try:
             req = urllib.request.Request(
