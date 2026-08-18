@@ -464,13 +464,13 @@
       <div id="buttons">
         <button id="play">▶ PLAY</button>
         <button id="prev" title="back through what already played" disabled>⏮ prev</button>
-        <button id="skip" title="not right now — mild signal">⏭ skip</button>
+        <button id="skip" title="not right now — mild signal">⏭ next</button>
         <button id="dislike" title="less of this vein — strong signal">✕ dislike</button>
         <button id="keep" title="save forever + more of this vein">★ keep</button>
         <button id="shuffle" title="off · generated · everything">⤨ shuffle</button>
       </div>
       <div id="gauge"></div>
-      <div id="foot">skip = "not now" · dislike = "less of this" · keep = saved
+      <div id="foot">next = "not now" · dislike = "less of this" · keep = saved
         forever · <a href="import.html">dubbing bay</a></div>
     </div>
 
@@ -724,7 +724,7 @@ async function seedHistory() {
 
 $("play").onclick = () => { $("play").style.display = "none"; initVU(); next(); };
 $("prev").onclick = prev;
-$("skip").onclick = () => { feedback("skip"); toast("skipped"); next(); };
+$("skip").onclick = () => { feedback("skip"); toast("next"); next(); };
 $("dislike").onclick = () => { feedback("dislike"); toast("less of that vein"); next(); };
 $("keep").onclick = async () => {
   const r = await feedback("keep");
@@ -1174,7 +1174,7 @@ const STAGES = {
 
 function stageFrom(msg) {
   const m = (msg || "").toLowerCase();
-  if (m.includes("bundles")) return "writing";          // LLM residency
+  if (m.startsWith("writing") || m.includes("bundles")) return "writing";
   if (m.startsWith("generating")) return "generating";
   if (m.startsWith("judging")) return "judging";
   if (m.includes("accept")) return "banked";

@@ -51,6 +51,7 @@ LLM_URL = (_cfg["llm_base"] or "").rstrip("/") or None
 LLM_MODEL = _cfg["llm_model"]
 CAPTION_BATCH = int(_cfg.get("caption_batch", 10))
 BUNDLE_QUEUE_TARGET = int(_cfg.get("bundle_queue_target", 20))  # pre-written bundles to keep banked on disk
+STARVED_BELOW = 4             # spool depth under which a long residency hurts
 BUNDLE_FILE = f"{BASE}/radio/bundles.jsonl"
 MIN_TAKE_S = int(_cfg.get("min_take_s", 45))  # cull true stubs; length ambition lives in captions
 TANK_TARGET_TRACKS = int(_cfg.get("tank_target_tracks", 20))  # generate whenever fewer than this many are banked
@@ -197,6 +198,21 @@ _stop = False
 def _sigterm(*_):
     global _stop
     _stop = True
+
+
+def nap(seconds):
+    """Sleep, but wake the moment SIGTERM lands.
+
+    Every long wait here — the backoff, the idle loop, a hold — used to be a
+    plain sleep, so stopping the service meant waiting out whichever one was
+    running. A 120s backoff turned a restart into a two minute outage, with
+    systemd reporting 'deactivating' the whole time."""
+    end = time.time() + seconds
+    while not _stop:
+        left = end - time.time()
+        if left <= 0:
+            return
+        time.sleep(min(2.0, left))
 
 
 # ---------------------------------------------------------------- utilities
@@ -676,7 +692,17 @@ def refill_bundles(cards, per, per_n, count, weights_path, p):
     # after the LLM became reachable again. Measured: 20 of 20 recent takes
     # opened with the seed's boilerplate. Write just enough to keep the radio
     # moving, and let the queue refill properly once the card frees.
-    batch = CAPTION_BATCH if freed else 2
+    # A residency is ~30s per call on this LLM, so a full batch is six
+    # minutes with the card handed over and nothing generating. That is fine
+    # when the spool is deep and invisible; it is dead air when the spool is
+    # nearly empty. Write a few, get back to generating, and top the queue up
+    # properly during the next idle window.
+    if not freed:
+        batch = 2
+    elif count < STARVED_BELOW:
+        batch = 3
+    else:
+        batch = CAPTION_BATCH
     picks = []
     for _ in range(batch):
         excl = cap_excludes(cards, sim_n, n)
@@ -694,7 +720,9 @@ def refill_bundles(cards, per, per_n, count, weights_path, p):
                 rewrite_card(v, cards[v], p["analysis"],
                              os.path.join(p["analysis"], "essence_cards.json"))
     out = []
-    for v in picks:
+    for n_done, v in enumerate(picks, 1):
+        if freed and len(picks) > 1:
+            log(f"writing caption {n_done}/{len(picks)} ({cards[v]['name']})")
         card = cards[v]
         if freed:
             caption, bpm, target_s, arc_shape = sample_caption(v, card)
@@ -1360,7 +1388,7 @@ def main():
         loaded = load_station(slug, cache)
         if loaded is None:
             log(f"station '{slug}' has no capture yet — holding")
-            time.sleep(LOOP_SLEEP)
+            nap(LOOP_SLEEP)
             continue
         p, cards, critic, scores = loaded
         if slug != last_slug:
@@ -1378,7 +1406,7 @@ def main():
         # Hold generation loudly; serving the existing spool needs no space.
         if shutil.disk_usage(BASE).free < 2 * 2 ** 30:
             log("DISK nearly full (<2 GiB) — holding generation")
-            time.sleep(300)
+            nap(300)
             continue
 
         janitor(p["meta"], p["tank"], p["keepers"])
@@ -1398,7 +1426,7 @@ def main():
             log(f"spool full ({count} takes banked, {total/60:.0f} min)")
             if ONESHOT:
                 return
-            time.sleep(LOOP_SLEEP)
+            nap(LOOP_SLEEP)
             continue
 
         reason = hold_reason()
@@ -1407,7 +1435,7 @@ def main():
             # a bouncing server is back within seconds, so poll for it rather
             # than sleeping out a full cycle; a busy sibling or a game really
             # is a wait
-            time.sleep(8 if "server down" in reason else LOOP_SLEEP)
+            nap(8 if "server down" in reason else LOOP_SLEEP)
             continue
 
         if not bundles:
@@ -1512,6 +1540,8 @@ def main():
                     consec_timeouts = 0
                     time.sleep(45)
                     continue
+            if _stop or status == "stopped":
+                return
             if status and "prompt lost" in status:
                 # BACKOFF is for a machine in trouble — a preempted run, a
                 # server that fell over. A prompt lost to a restart leaves a
@@ -1521,7 +1551,7 @@ def main():
                 log("prompt lost — re-cutting immediately")
                 continue
             log(f"generation {status}; backoff {BACKOFF}s")
-            time.sleep(BACKOFF)
+            nap(BACKOFF)
             continue
         consec_timeouts = 0
 
