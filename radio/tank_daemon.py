@@ -103,14 +103,13 @@ def structural_tags(target_s, form=None, arc=None):
     cycle = INSTRUMENTAL_FORMS[name]
     want = max(2, mins + 1)
     body = [cycle[i % len(cycle)] for i in range(want)]
-    if arc == "builds_to_end":
-        # No [outro]. An outro is a taper by convention, and it sat directly
-        # after a caption asking the piece to peak at the end — measured, the
-        # tag won: 1 of 20 takes actually built to the end where 4 were
-        # expected. End on the loudest thing the form has instead.
-        peak = "drop" if "drop" in cycle else "instrumental"
-        return "\n\n".join(["[intro]"] + [f"[{s}]" for s in body]
-                            + [f"[{peak}]"])
+    # No arc special-casing here. Dropping the [outro] for builds-to-end was
+    # tried on the theory that the tag was arguing with the caption, and
+    # measured: 5 requested, 0 delivered, no better than before. The cause is
+    # upstream — takes end at a median 46% of the length their caption plans
+    # for, so a piece told to peak at four minutes is cut off at ninety
+    # seconds and never reaches the peak at all. Arc cannot be steered until
+    # length can; see sample_arc().
     return "\n\n".join(["[intro]"] + [f"[{s}]" for s in body] + ["[outro]"])
 # Adaptive bar (Dean's design): every critic reject eases that vein's bar a
 # little so dead air self-limits; the next accept snaps it back to the
@@ -693,7 +692,16 @@ def sample_arc(env):
 
     Cards written before this existed — and hand-tuned cards, whose arc
     phrases are better than anything generated here — have no distribution,
-    and keep their single stated arc."""
+    and keep their single stated arc.
+
+    MEASURED CAVEAT: this steers the caption, and the caption does not
+    reliably steer the audio. Across 20 takes, the requested shape arrived
+    40% of the time overall and 0 of 5 times for builds-to-end, because takes
+    end at a median 46% of their planned length — the back half of the arc,
+    where the shape is decided, never gets generated. Worth keeping (it costs
+    nothing and does diversify the captions) but do not read the request as
+    a guarantee about the audio.
+    """
     shapes = (env or {}).get("energy_shapes")
     stated = (env or {}).get("energy_arc", "")
     if not shapes:
