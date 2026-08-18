@@ -77,6 +77,20 @@ PROMPT = (
 )
 
 
+# Set before torch is imported. cudaMallocAsync cannot hand cached blocks
+# back to satisfy a new allocation, so it fails outright where the default
+# allocator frees and retries — observed here as OOM on the longest inputs
+# with the card otherwise fine. This pass runs one very large model against
+# inputs of wildly varying length, which is the fragmentation case
+# expandable_segments exists for.
+_alloc = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "")
+if not _alloc or "cudaMallocAsync" in _alloc:
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    if _alloc:
+        print(f"overriding PYTORCH_CUDA_ALLOC_CONF={_alloc} -> "
+              "expandable_segments:True for this pass", flush=True)
+
+
 BREADCRUMB = os.path.join(os.path.dirname(OUT), "caption_attempting.txt")
 
 
@@ -131,6 +145,18 @@ def queue_busy():
 
 
 FLAMINGO_VRAM_MB = 12000  # 8-bit weights plus activations
+
+
+def _is_oom(exc):
+    """Match on what the error says rather than its class: torch moves
+    OutOfMemoryError between versions, and the cudaMallocAsync backend words
+    it differently again ("would exceed allowed memory"). Anything that is
+    not an OOM must propagate — retrying a real bug four times just hides
+    it."""
+    msg = str(exc).lower()
+    return (type(exc).__name__ == "OutOfMemoryError"
+            or "out of memory" in msg
+            or "exceed allowed memory" in msg)
 
 
 def _smi(field):
@@ -309,12 +335,16 @@ def main():
                 f.write(rel)
             try:
                 dur = librosa.get_duration(path=path)
-                if dur > MAX_INPUT_S:
-                    off = (dur - MAX_INPUT_S) / 2
-                    y, _ = librosa.load(path, sr=sr, mono=True,
-                                        offset=off, duration=MAX_INPUT_S)
-                else:
-                    y, _ = librosa.load(path, sr=sr, mono=True)
+
+                def _load(ceiling):
+                    """Middle `ceiling` seconds — the representative cut."""
+                    if dur > ceiling:
+                        off = (dur - ceiling) / 2
+                        return librosa.load(path, sr=sr, mono=True,
+                                            offset=off, duration=ceiling)[0]
+                    return librosa.load(path, sr=sr, mono=True)[0]
+
+                y = _load(MAX_INPUT_S)
                 # a NaN, inf, or out-of-range sample can trip a device-side
                 # assert that poisons the CUDA context for every later track
                 y = np.clip(np.nan_to_num(y, nan=0.0, posinf=1.0,
@@ -322,19 +352,50 @@ def main():
                 if len(y) < sr * 3:
                     raise ValueError(f"too short: {len(y)/sr:.1f}s")
 
-                conv = [{"role": "user", "content": [
-                    {"type": "audio", "audio": y},
-                    {"type": "text", "text": PROMPT}]}]
-                inputs = processor.apply_chat_template(
-                    conv, add_generation_prompt=True, tokenize=True,
-                    return_dict=True, return_tensors="pt").to(
-                        model.device, torch.bfloat16)  # casts float tensors only
-                with torch.no_grad():
-                    out = model.generate(**inputs, max_new_tokens=512,
-                                         do_sample=False)
-                text = processor.batch_decode(
-                    out[:, inputs["input_ids"].shape[1]:],
-                    skip_special_tokens=True)[0].strip()
+                # An allocation that does not fit is not a reason to lose
+                # the track. Retry once after handing the allocator's cached
+                # blocks back, then describe progressively shorter excerpts
+                # rather than nothing — only the longest inputs ever get here,
+                # and a three-minute cut still characterises a track well.
+                text = None
+                last_ceiling = None
+                for attempt, ceiling in enumerate(
+                        (MAX_INPUT_S, MAX_INPUT_S,
+                         MAX_INPUT_S // 2, MAX_INPUT_S // 3)):
+                    if attempt:
+                        torch.cuda.empty_cache()
+                        if ceiling != last_ceiling:
+                            y = _load(ceiling)
+                            print(f"OOM again — describing {ceiling}s of "
+                                  f"{rel}", flush=True)
+                        else:
+                            print(f"OOM on {rel} — cache released, retrying",
+                                  flush=True)
+                    last_ceiling = ceiling
+                    inputs = None
+                    try:
+                        conv = [{"role": "user", "content": [
+                            {"type": "audio", "audio": y},
+                            {"type": "text", "text": PROMPT}]}]
+                        inputs = processor.apply_chat_template(
+                            conv, add_generation_prompt=True, tokenize=True,
+                            return_dict=True, return_tensors="pt").to(
+                                model.device, torch.bfloat16)  # floats only
+                        with torch.no_grad():
+                            out = model.generate(**inputs, max_new_tokens=512,
+                                                 do_sample=False)
+                        text = processor.batch_decode(
+                            out[:, inputs["input_ids"].shape[1]:],
+                            skip_special_tokens=True)[0].strip()
+                        break
+                    except Exception as exc:
+                        if not _is_oom(exc):
+                            raise
+                        del inputs
+                        continue
+                if text is None:
+                    raise MemoryError(
+                        f"out of memory even at {MAX_INPUT_S // 3}s of audio")
 
                 with open(OUT, "a") as f:
                     f.write(json.dumps({
