@@ -623,8 +623,16 @@ def refill_bundles(cards, per, per_n, count, weights_path, p):
     sim_n = dict(per_n)
     n = count
     lv = lyric_veins(cards)
+    freed = free_music3()
+    # A batch of seed captions is not worth banking. Writing CAPTION_BATCH of
+    # them while the card is busy fills a 20-deep queue with the same static
+    # card text, and the daemon then spends the next ~40 takes on it — long
+    # after the LLM became reachable again. Measured: 20 of 20 recent takes
+    # opened with the seed's boilerplate. Write just enough to keep the radio
+    # moving, and let the queue refill properly once the card frees.
+    batch = CAPTION_BATCH if freed else 2
     picks = []
-    for _ in range(CAPTION_BATCH):
+    for _ in range(batch):
         excl = cap_excludes(cards, sim_n, n)
         v = pick_vein(cards, sim, weights_path, excl)
         # a bundle composes TWICE (uses=2) — the cap simulation must count
@@ -633,7 +641,6 @@ def refill_bundles(cards, per, per_n, count, weights_path, p):
         sim_n[v] = sim_n.get(v, 0) + 2
         n += 2
         picks.append(v)
-    freed = free_music3()
     if freed:
         while _needs_rewrite:
             v = _needs_rewrite.pop()
@@ -655,7 +662,9 @@ def refill_bundles(cards, per, per_n, count, weights_path, p):
         # is the composer), halving residency demand at zero quality cost
         out.append({"vein": v, "caption": caption, "lyrics": lyr,
                     "bpm": bpm, "target_s": target_s, "uses": 2,
-                    "arc": arc_shape})
+                    "arc": arc_shape,
+                    # so the queue can tell a written caption from a seed
+                    "seed": not freed})
     if freed:
         unload_llm()
     return out
