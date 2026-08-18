@@ -66,6 +66,11 @@
     padding: .9rem 1rem .7rem; margin-bottom: .9rem;
     box-shadow: inset 0 0 24px #000, inset 0 0 60px #12093080;
     flex: 1 0 auto; display: flex; flex-direction: column;
+    /* Absorbing the panel's slack is right for a few dozen pixels and absurd
+       for a few hundred: once the rail grew a Keepers section the window went
+       to 556x616 — taller than wide — around a 121px transport. Cap it so the
+       tape window always reads as a landscape window. */
+    max-height: 300px;
   }
   #tape-label {
     display: flex; justify-content: space-between; align-items: center;
@@ -206,13 +211,37 @@
     -webkit-mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px);
             mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px); }
   .g-min { width: 4.5rem; }
-  #foot { margin-top: 1rem; color: #4c4768; font-size: .62rem; letter-spacing: .06em; }
+  /* auto, so any slack the capped cassette no longer eats collects here
+     instead of stretching one element out of proportion */
+  #foot { margin-top: auto; padding-top: 1rem; color: #4c4768; font-size: .62rem; letter-spacing: .06em; }
   a { color: inherit; }
 
   /* ---------------- rack (rail) ---------------- */
   .rail-h { font-size: .66rem; letter-spacing: .3em; text-transform: uppercase;
             color: var(--cyan); text-shadow: 0 0 8px #00e5ff70; margin-bottom: .6rem; }
   .rail-sec { margin-bottom: 1.3rem; }
+
+  /* ---------------- keepers ---------------- */
+  #kp-list { display: flex; flex-direction: column; gap: 2px;
+             max-height: 190px; overflow-y: auto; }
+  .kp-row { display: flex; align-items: center; gap: .4rem;
+            font-size: .6rem; padding: .22rem .35rem; border-radius: 3px;
+            background: #ffffff05; cursor: pointer; }
+  .kp-row:hover { background: #ffffff0d; }
+  .kp-row.sel { background: color-mix(in srgb, var(--vfd) 16%, transparent);
+                outline: 1px solid color-mix(in srgb, var(--vfd) 40%, transparent); }
+  .kp-name { flex: 1; overflow: hidden; white-space: nowrap;
+             text-overflow: ellipsis; color: var(--text); }
+  .kp-sub { flex: 0 0 auto; color: var(--dim); font-variant-numeric: tabular-nums; }
+  #kp-actions { display: flex; gap: .3rem; margin-top: .45rem;
+                align-items: center; flex-wrap: wrap; }
+  #kp-actions button, #kp-actions select {
+    font: inherit; font-size: .58rem; padding: .18rem .4rem;
+    background: #1b1530; color: var(--text); border: 1px solid #3a2f60;
+    border-radius: 4px; cursor: pointer; }
+  #kp-actions button:disabled, #kp-actions select:disabled {
+    opacity: .35; cursor: default; }
+  #kp-empty { font-size: .58rem; color: var(--dim); line-height: 1.5; }
 
   /* ---------------- critic ---------------- */
   #cr-bias-row { display: flex; align-items: center; gap: .4rem;
@@ -453,6 +482,26 @@
       </div>
 
       <div class="rail-sec">
+        <div class="rail-h">Keepers
+          <span id="kp-count" style="text-transform:none;letter-spacing:0;
+            color:var(--dim);float:right"></span>
+        </div>
+        <div id="kp-empty">Nothing kept yet — press ★ keep on a track you like.</div>
+        <div id="kp-list"></div>
+        <div id="kp-actions">
+          <button id="kp-play" disabled>▶ play</button>
+          <button id="kp-rename" disabled>rename</button>
+          <select id="kp-fmt" disabled>
+            <option value="mp3">MP3</option>
+            <option value="wav">WAV</option>
+            <option value="flac">FLAC</option>
+          </select>
+          <button id="kp-export" disabled>export</button>
+          <button id="kp-remove" disabled title="drop the permanent copy">✕</button>
+        </div>
+      </div>
+
+      <div class="rail-sec">
         <div class="rail-h">Critic
           <span id="cr-rate" style="text-transform:none;letter-spacing:0;
             color:var(--dim);float:right"></span>
@@ -583,6 +632,7 @@ $("keep").onclick = async () => {
     $("keep").classList.add("done");
     $("keep").textContent = "★ kept";
     toast("saved to keepers — more of this vein");
+    kpLoad();
   }
 };
 $("desc").onclick = () => $("desc").classList.toggle("open");
@@ -1061,10 +1111,88 @@ document.getElementById("cr-up").onclick = () => nudgeBar(crBiasStep);
 document.getElementById("cr-down").onclick = () => nudgeBar(-crBiasStep);
 pollCritic();
 
+// ----------------------------------------------------------------- keepers
+// A kept take used to be reachable only by knowing its filename. Selecting a
+// row here loads it into the deck exactly like any other track — show() does
+// not care where the URL points — so replay needs no separate player.
+let kpRows = [], kpSel = null;
+
+function kpRender() {
+  const list = $("kp-list"), empty = $("kp-empty");
+  list.innerHTML = "";
+  $("kp-count").textContent = kpRows.length ? `${kpRows.length} kept` : "";
+  empty.style.display = kpRows.length ? "none" : "block";
+  for (const k of kpRows) {
+    const row = document.createElement("div");
+    row.className = "kp-row" + (k.file === kpSel ? " sel" : "");
+    row.innerHTML = '<span class="kp-name"></span><span class="kp-sub"></span>';
+    row.querySelector(".kp-name").textContent = k.title || k.vein_name || k.file;
+    const mins = k.duration_s ? Math.floor(k.duration_s / 60) + ":" +
+      String(Math.round(k.duration_s % 60)).padStart(2, "0") : "";
+    row.querySelector(".kp-sub").textContent = mins;
+    row.title = (k.title ? k.title + " — " : "") + (k.vein_name || "") +
+      (k.score ? `  score ${k.score}` : "") + (k.caption ? "\n\n" + k.caption : "");
+    row.onclick = () => { kpSel = (kpSel === k.file ? null : k.file); kpRender(); };
+    row.ondblclick = () => { kpSel = k.file; kpPlay(); };
+    list.appendChild(row);
+  }
+  for (const id of ["kp-play","kp-rename","kp-export","kp-remove","kp-fmt"])
+    $(id).disabled = !kpSel;
+}
+
+async function kpLoad() {
+  try { kpRows = (await (await fetch("/music_studio/keepers")).json()).keepers || []; }
+  catch { return; }
+  if (kpSel && !kpRows.some(k => k.file === kpSel)) kpSel = null;
+  kpRender();
+}
+
+function kpCurrent() { return kpRows.find(k => k.file === kpSel); }
+
+function kpPlay() {
+  const k = kpCurrent();
+  if (!k) return;
+  if ($("play").style.display !== "none") { $("play").style.display = "none"; initVU(); }
+  show({ id: null, vein: k.vein, vein_name: k.title || k.vein_name,
+         url: k.url, duration_s: k.duration_s, bpm: k.bpm, score: k.score,
+         caption: k.caption, lyrics: k.lyrics, keeper: true }, true);
+  toast("playing a keeper");
+}
+
+$("kp-play").onclick = kpPlay;
+$("kp-rename").onclick = async () => {
+  const k = kpCurrent(); if (!k) return;
+  const title = prompt("Name this take:", k.title || k.vein_name || "");
+  if (title === null) return;
+  await fetch("/music_studio/keeper/title", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file: k.file, title }) });
+  kpLoad();
+};
+$("kp-export").onclick = () => {
+  const k = kpCurrent(); if (!k) return;
+  const fmt = $("kp-fmt").value;
+  // a plain navigation: the endpoint sets Content-Disposition, so the browser
+  // saves it under the take's name instead of playing it in a tab
+  window.location.href =
+    `/music_studio/keeper/export?file=${encodeURIComponent(k.file)}&format=${fmt}`;
+  toast(`exporting ${fmt.toUpperCase()}…`);
+};
+$("kp-remove").onclick = async () => {
+  const k = kpCurrent(); if (!k) return;
+  if (!confirm(`Drop "${k.title || k.vein_name}" from keepers?`)) return;
+  await fetch("/music_studio/keeper/remove", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file: k.file }) });
+  kpSel = null; kpLoad();
+};
+kpLoad();
+
 setInterval(refreshGauge, 30000);
 setInterval(pollCapture, 3000);
 setInterval(pollGpu, 2500);
 setInterval(pollCritic, 5000);
+setInterval(kpLoad, 15000);
 </script>
 </body>
 </html>

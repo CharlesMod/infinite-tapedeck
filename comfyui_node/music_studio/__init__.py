@@ -455,6 +455,148 @@ async def critic_bias(request):
                               "at_limit": abs(new) >= BIAS_MAX})
 
 
+# ------------------------------------------------------------------ keepers
+#
+# Keeping a take copied it somewhere safe and that was the end of it: nothing
+# listed keepers, nothing replayed them, and the filename was the only handle.
+# Titles live in a sidecar rather than renaming the file, because FILE_RE is
+# both the name pattern and the path-traversal guard on the audio route —
+# renaming on disk would mean loosening that check for a cosmetic feature.
+
+EXPORT_FORMATS = {"mp3": "audio/mpeg", "wav": "audio/wav", "flac": "audio/flac"}
+
+
+def _titles_path(p):
+    return os.path.join(os.path.dirname(p["meta"]), "keeper_titles.json")
+
+
+def _titles(p):
+    try:
+        with open(_titles_path(p)) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_titles(p, d):
+    tmp = _titles_path(p) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=1)
+    os.replace(tmp, _titles_path(p))
+
+
+def _keeper_rows(p):
+    if not os.path.isdir(p["keepers"]):
+        return []
+    files = [f for f in os.listdir(p["keepers"]) if FILE_RE.match(f)]
+    recs, _, _ = _read_state(p)
+    by_file = {m["file"]: m for m in recs.values() if "file" in m}
+    titles = _titles(p)
+    rows = []
+    for f in files:
+        m = by_file.get(f, {})
+        rows.append({
+            "file": f, "title": titles.get(f, ""),
+            "vein": m.get("vein"), "vein_name": m.get("vein_name", "?"),
+            "duration_s": m.get("duration_s"), "score": m.get("score"),
+            "bpm": m.get("bpm"), "created": m.get("created", 0),
+            "caption": m.get("caption", ""), "lyrics": m.get("lyrics", ""),
+            "url": f"/music_studio/audio/{f}",
+        })
+    rows.sort(key=lambda r: r["created"] or 0, reverse=True)
+    return rows
+
+
+@PromptServer.instance.routes.get("/music_studio/keepers")
+async def keepers_list(request):
+    return web.json_response({"keepers": _keeper_rows(_p())})
+
+
+@PromptServer.instance.routes.post("/music_studio/keeper/title")
+async def keeper_title(request):
+    data = await request.json()
+    name = str(data.get("file") or "")
+    if not FILE_RE.match(name):
+        return web.json_response({"error": "rejected"}, status=400)
+    p = _p()
+    titles = _titles(p)
+    title = str(data.get("title") or "").strip()[:120]
+    if title:
+        titles[name] = title
+    else:
+        titles.pop(name, None)
+    _save_titles(p, titles)
+    return web.json_response({"ok": True, "title": title})
+
+
+@PromptServer.instance.routes.post("/music_studio/keeper/remove")
+async def keeper_remove(request):
+    """Unkeep: drop the permanent copy. The tank copy, if it survives, goes
+    back to being the janitor's business."""
+    data = await request.json()
+    name = str(data.get("file") or "")
+    if not FILE_RE.match(name):
+        return web.json_response({"error": "rejected"}, status=400)
+    p = _p()
+    path = os.path.join(p["keepers"], name)
+    try:
+        if os.path.exists(path):
+            os.unlink(path)
+    except OSError as e:
+        return web.json_response({"error": repr(e)[:80]}, status=500)
+    titles = _titles(p)
+    if titles.pop(name, None) is not None:
+        _save_titles(p, titles)
+    return web.json_response({"ok": True})
+
+
+def _transcode(src, dst, fmt):
+    import av
+    codec = {"wav": "pcm_s16le", "flac": "flac"}[fmt]
+    with av.open(src) as inp:
+        ist = inp.streams.audio[0]
+        with av.open(dst, "w", format=fmt) as out:
+            ost = out.add_stream(codec, rate=ist.codec_context.rate)
+            ost.layout = ist.layout
+            for frame in inp.decode(ist):
+                frame.pts = None
+                for pkt in ost.encode(frame):
+                    out.mux(pkt)
+            for pkt in ost.encode():
+                out.mux(pkt)
+
+
+@PromptServer.instance.routes.get("/music_studio/keeper/export")
+async def keeper_export(request):
+    """Download a keeper under its own name. MP3 is what the generator wrote,
+    so it is served as-is; WAV and FLAC are transcoded and cached, since PyAV
+    is already a dependency and re-decoding on every click is pointless."""
+    name = request.query.get("file", "")
+    fmt = request.query.get("format", "mp3").lower()
+    if not FILE_RE.match(name) or fmt not in EXPORT_FORMATS:
+        return web.json_response({"error": "rejected"}, status=400)
+    p = _p()
+    src = os.path.join(p["keepers"], name)
+    if not os.path.exists(src):
+        return web.json_response({"error": "gone"}, status=404)
+    title = _titles(p).get(name) or os.path.splitext(name)[0]
+    safe = re.sub(r"[^\w\-. ]+", "_", title).strip() or "take"
+    headers = {"Content-Disposition": f'attachment; filename="{safe}.{fmt}"'}
+    if fmt == "mp3":
+        return web.FileResponse(src, headers=headers)
+    cache = os.path.join(os.path.dirname(p["meta"]), "exports")
+    os.makedirs(cache, exist_ok=True)
+    dst = os.path.join(cache, f"{os.path.splitext(name)[0]}.{fmt}")
+    if not os.path.exists(dst) or os.path.getmtime(dst) < os.path.getmtime(src):
+        try:
+            _transcode(src, dst, fmt)
+        except Exception as e:
+            return web.json_response({"error": f"transcode failed: {e!r:.80}"},
+                                     status=500)
+    return web.FileResponse(dst, headers=headers)
+
+
 @PromptServer.instance.routes.get("/music_studio/stations")
 async def stations_list(request):
     return web.json_response({"stations": stations.listing(),
