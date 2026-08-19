@@ -53,6 +53,12 @@ SPEED_WINDOW = 3              # takes averaged into the SPEED readout — short
                               # on purpose: this is a "how fast is it going
                               # right now" needle, not a lifetime average
 
+SPOOL_FRESH_FIRST = 15        # made-mode shuffle drains the fresh spool
+                              # before replaying the archive while it holds
+                              # this many takes or more, so a near-full spool
+                              # (daemon target 20) keeps turning over and the
+                              # daemon never idles on a backed-up tank.
+
 stations.ensure_registry()
 _last_vein = None
 _import_proc = None
@@ -231,15 +237,32 @@ async def shuffle_next(request):
     if mode not in ("generated", "all"):
         return web.json_response({"error": "bad mode"}, status=400)
     p = _p()
-    pool = [{"kind": "take", "m": m} for m in _generated_pool(p)]
-    if mode == "all":
-        pool += [{"kind": "source", "rel": rel} for rel in _source_audio(p["source"])]
+    _, avail, _ = _read_state(p)
+    fresh = {m["id"] for m in avail}
+    if mode == "generated" and len(avail) >= SPOOL_FRESH_FIRST:
+        # Spool backed up near the daemon's tank target: it has stopped
+        # generating, so drain fresh takes before dipping into the archive.
+        # Every pick is then a fresh take that keeps the daemon filling
+        # behind it; once the spool falls below the threshold, shuffle the
+        # whole made catalog again.
+        pool = [{"kind": "take", "m": m} for m in avail]
+    else:
+        pool = [{"kind": "take", "m": m} for m in _generated_pool(p)]
+        if mode == "all":
+            pool += [{"kind": "source", "rel": rel} for rel in _source_audio(p["source"])]
     if not pool:
         return web.json_response({"empty": True,
                                   "hint": "nothing to shuffle yet"})
     pick = random.choice(pool)
     if pick["kind"] == "take":
         m = pick["m"]
+        # Playing a fresh spool take consumes it, exactly as /next does, so
+        # shuffling still draws the in-tape down and the daemon keeps filling
+        # behind it. An already-consumed archive take or a keeper (not in the
+        # fresh set) is a replay and leaves the played ledger untouched.
+        if m["id"] in fresh:
+            _append_event(p, {"event": "consumed", "id": m["id"],
+                              "ts": int(time.time())})
         return web.json_response({
             "id": m["id"], "vein": m["vein"],
             "vein_name": m.get("vein_name", "?"), "shuffle": True,
