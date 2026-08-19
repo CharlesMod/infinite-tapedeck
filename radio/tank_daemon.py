@@ -730,7 +730,7 @@ def refill_bundles(cards, per, per_n, count, weights_path, p):
             # unfreed card: never wake the LLM into a VRAM squeeze —
             # seed captions keep the radio fed until the card clears
             caption, bpm, target_s, arc_shape = fallback_caption(v, card)
-        lyr = ((sample_lyrics(card) if freed else "")
+        lyr = ((sample_lyrics(card, p["meta"]) if freed else "")
                if v in lv else structural_tags(target_s, arc=arc_shape))
         # uses=2: one caption composes two different songs (the encoder seed
         # is the composer), halving residency demand at zero quality cost
@@ -954,16 +954,166 @@ def sample_caption(vein, card):
     return seed_caption, bpm, target_s, arc_shape
 
 
-def sample_lyrics(card):
+# ---------------------------------------------------------- lyric variety
+#
+# Measured 2026-08-19: with a static prompt the lyricist mode-collapsed —
+# "vending machine" appeared in 25 of 33 sung takes ever written, and the
+# prompt's own example imagery (payphone, static, mixtape, fluorescent,
+# parking) in 13 of the last 15. Examples in the prompt become attractors
+# at temperature 1.0, so the prompt now carries NO example list. Instead
+# each song ROLLS its anchors here (LLMs randomize poorly — the same
+# reasoning as sample_caption), a persisted window rests recent rolls, and
+# a ban list measured from the last takes' actual lyrics suppresses
+# whatever the model is currently overusing, prompt-driven or spontaneous.
+
+LYRIC_SITUATIONS = [
+    "the microwave clock blinking the wrong time all week",
+    "waiting for the landline to ring after ten",
+    "riding the last escalator down as the mall closes",
+    "a rented movie due back an hour ago",
+    "copying a friend's homework in a stairwell before first bell",
+    "the elevator stopping on every floor when you're already late",
+    "an answering machine message you keep replaying",
+    "carrying laundry quarters in a winter coat",
+    "the neighbor's TV muffled through the wall",
+    "reheating leftovers after everyone's asleep",
+    "the bus that never comes and the one that finally does",
+    "learning someone's schedule by the sound of their door",
+    "the arcade closing while your initials are still on screen",
+    "a photo strip from the booth folded into a wallet",
+    "keys locked inside on a Sunday morning",
+    "the school hallway right after the bell empties it",
+    "watching headlights sweep the ceiling from bed",
+    "a slow elevator ride with someone you almost know",
+    "the ice cream truck song from three streets away",
+    "taping a song off the radio and clipping the intro",
+    "a pager number scribbled on a movie stub",
+    "the pool closed for the season behind a chain fence",
+    "grocery bags cutting into your fingers on the walk up",
+    "the projector cart rolling into class on a movie day",
+    "a wrong number that turned into a conversation",
+    "shoveling the car out to go nowhere in particular",
+    "the library right before close, half the lights off",
+    "a garage-sale radio that only gets one station",
+]
+
+LYRIC_IMAGES = [
+    "answering machine", "ceiling fan", "window-unit AC",
+    "corded phone stretched down the hall", "rabbit-ear antenna",
+    "VHS tracking lines", "video store shelf", "arcade cabinet",
+    "skee-ball tickets", "mall fountain", "food court tray",
+    "escalator handrail", "parking garage stairwell",
+    "apartment intercom", "radiator clank", "microwave clock",
+    "refrigerator hum", "corner store slushie", "bus transfer ticket",
+    "subway token", "dying walkman batteries", "cassette adapter",
+    "disposable camera", "one-hour photo envelope", "phone book",
+    "folded paper map", "locker magnet", "overhead projector",
+    "library date stamp", "motel ice bucket", "lava lamp",
+    "beaded curtain", "inflatable chair", "glow-in-the-dark stars",
+    "dial-up modem handshake", "CRT monitor glow", "screensaver maze",
+    "TV guide channel", "cul-de-sac streetlight", "storm drain echo",
+    "gym bleachers", "roller rink disco ball",
+]
+
+LYRIC_RECENT_FILE = f"{BASE}/radio/lyric_recent.json"
+LYRIC_WINDOW = 18             # rolled anchors rest this long before re-use
+LYRIC_BAN_TAKES = 15          # sung takes scanned for overuse
+LYRIC_BAN_MIN = 4             # banned when in this many of them
+LYRIC_BAN_CAP = 10            # keep the prompt tight; worst offenders only
+
+_LYRIC_STOP = frozenset("""the a an and or but if then so of to in on at for
+with from by as is are was were be been am it its it's i you he she they we
+this that these those my your their our his her them us me him just like into
+out up down over under again still yet all no not dont don't wont won't cant
+can't ive i've im i'm youre you're theyre isnt aint gonna wanna gotta oh yeah
+hey la na ooh whoa ah when where what while there here your never every
+always""".split())
+
+
+def _lyric_recent():
+    try:
+        with open(LYRIC_RECENT_FILE) as f:
+            return [a for a in json.load(f).get("anchors", [])
+                    if isinstance(a, str)]
+    except Exception:
+        return []
+
+
+def _lyric_remember(anchors):
+    try:
+        keep = (_lyric_recent() + list(anchors))[-LYRIC_WINDOW:]
+        tmp = LYRIC_RECENT_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"anchors": keep, "ts": int(time.time())}, f)
+        os.replace(tmp, LYRIC_RECENT_FILE)
+    except Exception:
+        pass
+
+
+def _roll_anchors(banned):
+    """One situation + two images, dodging the rest window and anything
+    currently banned; the roll is remembered so following songs dodge it."""
+    rest = set(_lyric_recent())
+
+    def ok(a):
+        low = a.lower()
+        return a not in rest and not any(b in low for b in banned)
+
+    sits = [s for s in LYRIC_SITUATIONS if ok(s)] or list(LYRIC_SITUATIONS)
+    imgs = [i for i in LYRIC_IMAGES if ok(i)] or list(LYRIC_IMAGES)
+    situation = random.choice(sits)
+    images = random.sample(imgs, k=min(2, len(imgs)))
+    _lyric_remember([situation] + images)
+    return situation, images
+
+
+def _overused_words(meta_path):
+    """The live measurement: content words in >= LYRIC_BAN_MIN of the last
+    LYRIC_BAN_TAKES sung takes. Catches the model's spontaneous favorites
+    ("vending machine") as well as anything a prompt over-suggested."""
+    texts = []
+    try:
+        with open(meta_path) as f:
+            for line in f:
+                try:
+                    m = json.loads(line)
+                except Exception:
+                    continue
+                if m.get("event") or "id" not in m:
+                    continue
+                body = re.sub(r"\[[^\]]*\]", " ", m.get("lyrics", ""))
+                words = re.findall(r"[a-z']+", body.lower())
+                if len(words) >= 30:   # tag-only sheets are instrumentals
+                    texts.append(words)
+    except OSError:
+        return []
+    counts = {}
+    for words in texts[-LYRIC_BAN_TAKES:]:
+        for w in set(words):
+            if len(w) > 3 and w not in _LYRIC_STOP:
+                counts[w] = counts.get(w, 0) + 1
+    hot = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [w for w, n in hot if n >= LYRIC_BAN_MIN][:LYRIC_BAN_CAP]
+
+
+def sample_lyrics(card, meta_path=None):
+    banned = _overused_words(meta_path) if meta_path else []
+    situation, images = _roll_anchors(banned)
+    avoid = ("These words are overused in recent songs — do NOT use them or "
+             "name the objects they describe: " + ", ".join(banned) + ".\n"
+             ) if banned else ""
     prompt = (
         f"Write original lyrics for a song in this style: {card['essence']}\n"
-        "Voice: earnest, concrete everyday imagery, zero irony. Invent a "
-        "fresh specific mundane moment as the theme.\n"
-        "Imagery world: 90s suburban-indoor — apartments, parking lots, "
-        "payphones, TV static, mixtapes, late buses, fluorescent stores. "
+        "Voice: earnest, concrete everyday imagery, zero irony.\n"
+        f"THE MOMENT — build the whole song around this scene: {situation}.\n"
+        f"Weave in these images naturally: {'; '.join(images)}.\n"
+        "World: 90s suburban-indoor — apartments, transit, malls, school "
+        "corridors, small electronics. Invent further concrete details from "
+        "inside that world and this scene; do not drift to generic anthems. "
         "NO rural/Americana markers (porches, gardens, dirt roads, trucks, "
         "whiskey) — the generator hears those as country and twangs the "
         "whole arrangement.\n"
+        f"{avoid}"
         "Structure with section tags: [intro] [verse] [chorus] [verse] "
         "[chorus] [instrumental] [bridge] [chorus] [outro] — the tags are "
         "executable song structure, so use all of them. Under 260 words.\n"
