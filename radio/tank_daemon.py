@@ -1258,7 +1258,7 @@ def tank_seconds(meta_path):
                     continue
                 if m.get("event") == "consumed":
                     consumed.add(m["id"])
-                elif "id" in m:
+                elif not m.get("event") and "id" in m:
                     recs[m["id"]] = m
     per = {}
     per_n = {}
