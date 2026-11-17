@@ -1802,4 +1802,9 @@ def main():
 
 
 if __name__ == "__main__":
+    # Kill switch: radio/DISABLED stops the tank from starting at all
+    # (unlike PAUSE, which holds a running daemon). Delete it to re-enable.
+    if os.path.exists(os.path.join(BASE, "radio", "DISABLED")):
+        print("tank: radio/DISABLED present, not starting", file=sys.stderr)
+        sys.exit(0)
     main()

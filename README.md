@@ -137,6 +137,12 @@ tapedeck stop | start | restart | logs
 tapedeck capture    # re-capture after adding music
 ```
 
+Or run it all from the tray: `tapedeck tray` (or `tray/install-desktop.sh
+[--autostart]` for a menu entry). The tray starts the deck, opens it in its own
+window, pauses/resumes captioning, switches the radio on and off, and **Quit**
+stops everything and gives the GPU back. Needs a Python with PySide6
+(`TAPEDECK_TRAY_PY`, default `/usr/bin/python3`).
+
 Re-running `install.sh` is safe: every step skips work already done. Already
 have ComfyUI or the weights? `--comfy DIR`, `--python PATH`,
 `--weights-from DIR`. Everything is in `./install.sh --help`; the manual

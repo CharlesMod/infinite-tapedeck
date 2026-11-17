@@ -9,6 +9,8 @@
 #   tapedeck logs       follow ComfyUI + daemon logs
 #   tapedeck capture [--no-captions]   (re)capture the active station's library
 #   tapedeck open       print the deck URL
+#   tapedeck tray       the tray app: deck window, pause/resume captioning,
+#                       radio on/off, Quit frees the GPU (owns start/stop)
 set -uo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 ENV="$HERE/run/tapedeck.env"
@@ -103,5 +105,6 @@ case "${1:-status}" in
   logs) tail -n 40 -F "$RUN/comfy.log" "$RUN/daemon.log" ;;
   capture) shift; capture "$@" ;;
   open|url) url ;;
-  *) sed -n '2,12p' "$0"; exit 2 ;;
+  tray) shift; exec "${TAPEDECK_TRAY_PY:-/usr/bin/python3}" "$TAPEDECK/tray/tapedeck_tray.py" "$@" ;;
+  *) sed -n '2,14p' "$0"; exit 2 ;;
 esac
