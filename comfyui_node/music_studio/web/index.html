@@ -417,7 +417,7 @@
     /* the card is a size container, so the cassette sizes itself from the
        card's real height (cqh) rather than a guess about the window */
     #card { container-type: size; min-height: 0; overflow-y: auto; }
-    #cassette { width: min(calc(100% - 7.5rem), max(300px, calc((100cqh - 330px) * 1.574))); }
+    #cassette { width: min(calc(100% - 8.5rem), max(300px, calc((100cqh - 24.5rem) * 1.574))); }
     #vfd { flex: 1 1 auto; min-height: 5.5em; overflow: hidden; }
   }
 
@@ -449,6 +449,134 @@
     font-size: .72rem; letter-spacing: .1em; opacity: 0; transition: opacity .3s;
     pointer-events: none; z-index: 99; }
   #toast.show { opacity: 1; }
+
+  /* ================= cassette v2: a real cassette face =================
+     One SVG draws the shell, label, window, reels and transport; the texts
+     the code writes (station name, counters) are HTML laid over it and sized
+     in cqw so they scale with the cassette. */
+  #cassette { padding: 0; background: none; border: none; border-radius: 3.2% / 5%;
+    position: relative; container-type: inline-size; display: block;
+    box-shadow: 0 18px 50px #000b, 0 0 0 1px #3a2f60; }
+  #mech-wrap { position: absolute; inset: 0; display: block; }
+  #mech { display: block; width: 100%; height: 100%; }
+  #mech .shell { fill: url(#shellGrad); stroke: #4a3d78; stroke-width: 2; }
+  #mech .shell-in { fill: none; stroke: #ffffff10; stroke-width: 1.5; }
+  #mech .label { fill: url(#labelGrad); stroke: #b9ad90; stroke-width: 1; }
+  #mech .rule { stroke: #b7ab8f; stroke-width: 1; }
+  #mech .band { fill: var(--accent, var(--pink)); transition: fill .6s; }
+  #mech .band.b-a { opacity: .85; }
+  #mech .band.b-b { opacity: .42; }
+  #mech .window { fill: #06040c; }
+  #mech .window-rim { fill: none; stroke: #2a2145; stroke-width: 4; }
+  #mech .trap { fill: #0b0817; stroke: #3a2f60; stroke-width: 2; }
+  #mech .hole { fill: #05030a; stroke: #2c2347; stroke-width: 1.5; }
+  #mech .screw circle { fill: #15102a; stroke: #574a8a; stroke-width: 1.5; }
+  #mech .screw line { stroke: #6f62a8; stroke-width: 2; stroke-linecap: round; }
+  #pack-supply, #pack-take { fill: url(#packGrad); stroke: #5d4630; stroke-width: 1.5; }
+  .spokes .hub { fill: #ece9f6; stroke: #a9a3c4; stroke-width: 1.5; }
+  .spokes line { stroke: #2a2145; stroke-width: 3; }
+  .guide { fill: #1b1530; stroke: #6f62a8; stroke-width: 2; }
+  #tape-path { stroke: #6b5440; stroke-width: 3.5; }
+  #tape-label { position: absolute; left: 8.6%; right: 8.6%; top: 9.2%; margin: 0; padding: 0;
+    background: none; border: none; box-shadow: none; border-radius: 0;
+    display: flex; justify-content: space-between; align-items: baseline; gap: 2cqw; }
+  #vein-name { font-size: 3.3cqw; font-weight: 700; letter-spacing: .12em; color: #1b1530;
+    text-shadow: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #side { font-size: 1.25cqw; color: #6b6248; letter-spacing: .18em; white-space: nowrap; }
+  #spool-row { position: absolute; left: 8.6%; right: 8.6%; top: 61.2%; padding: 0;
+    font-size: 1.35cqw; letter-spacing: .14em; font-weight: 700; }
+  #spool-label { color: #6b3f00; opacity: 1; }
+  #played-label { color: #0f4f33; opacity: 1; }
+  #counter { right: 12.5%; top: auto; bottom: 6.5%; font-size: 2.3cqw; padding: .1em .4em; }
+  #stage-label { font-size: 7px; }
+
+  /* ================= skin v2: type, transport, display ================= */
+  html { font-size: clamp(15px, .9vw, 19px); }
+  body { font-size: .95rem; }
+  :root { --dim: #8f89b0; }
+  h1 { font-size: 1.5rem; letter-spacing: .6em; }
+  .rail-h { font-size: .76rem; margin-bottom: .7rem; }
+  .plate { font-size: .62rem; }
+  select, input[type=text] { font-size: .82rem; }
+  .small-btn { font-size: .74rem; }
+  #cap-state { font-size: .74rem; line-height: 1.5; }
+  .barlabel { font-size: .7rem; }
+  .sl-track { font-size: .78rem; padding: .42rem .7rem; }
+  #sl-count, #kp-empty, #cr-hint, #sp-note { font-size: .68rem; }
+  #deck-line { font-size: .72rem; line-height: 1.5; }
+  .g-row { font-size: .72rem; }
+  #sp-head { font-size: .7rem; }
+  #sp-ends { font-size: .64rem; }
+  #foot { font-size: .68rem; color: #6f6a8a; }
+  #buttons button { font-size: .82rem; padding: .8rem .25rem; }
+  .vu-ch { font-size: .68rem; }
+  .vm-n { font-size: .72rem; } .vm-l { font-size: .62rem; }
+  #meters { min-width: 7.6rem; }
+
+  /* now-playing display: a real readout, not a corner caption */
+  #vfd { padding: 1rem 1.3rem; display: flex; flex-direction: column; justify-content: center; }
+  #title { font-size: 1.55rem; letter-spacing: .16em; }
+  #stats { font-size: .86rem; margin-top: .4rem; }
+  #desc { font-size: .8rem; line-height: 1.5; margin-top: .55rem; max-height: 3em; }
+  #lyrics { font-size: .8rem; }
+
+  /* sliders: one look everywhere. --p is the filled share, set from JS. */
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 6px;
+    margin: .55rem 0 .3rem; border-radius: 3px; border: 1px solid #2c2347; cursor: pointer;
+    background: linear-gradient(90deg, var(--rc, var(--cyan)) var(--p, 0%), #0a0715 var(--p, 0%)); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px;
+    border-radius: 50%; background: #ece9f6; border: 2px solid var(--rc, var(--cyan));
+    box-shadow: 0 0 8px var(--rc, var(--cyan)); }
+  input[type=range]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%;
+    background: #ece9f6; border: 2px solid var(--rc, var(--cyan));
+    box-shadow: 0 0 8px var(--rc, var(--cyan)); }
+  input[type=range]::-moz-range-track { background: transparent; }
+  #sp-slider { --rc: var(--vfd); }
+  #ln-slider { --rc: var(--amber); }
+  #seek { --rc: var(--accent, var(--pink)); }
+
+  #transport { display: flex; align-items: center; gap: .7rem; margin-bottom: .9rem;
+    padding: .45rem .7rem; background: #0a0715; border: 1px solid #241c3d; border-radius: 8px; }
+  #transport input[type=range] { margin: 0; }
+  #seek { flex: 1 1 auto; }
+  #vol { flex: 0 0 6.5rem; --rc: var(--dim); }
+  #pp { flex: none; width: 2.1rem; height: 2.1rem; padding: 0; border-radius: 50%;
+    font-size: .8rem; line-height: 1; color: var(--cyan); border-color: #2f6f86; }
+  #t-cur, #t-dur { font-size: .78rem; color: var(--vfd); min-width: 2.6rem;
+    font-variant-numeric: tabular-nums; text-shadow: 0 0 6px #39ffa060; }
+  #t-dur { color: var(--dim); text-shadow: none; }
+  #vol-ic { font-size: .8rem; opacity: .75; }
+
+  /* skin v2 polish */
+  #sp-slider { height: 6px; margin: .55rem 0 .3rem; }
+  .rail-h #sl-src { display: block; margin-top: .25rem; font-size: .62rem; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  #kp-list:empty + #kp-actions { display: none; }
+  @media (min-width: 1400px) {
+    #rail-cols { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+  }
+
+  /* dark label: the deck stays dark mode end to end */
+  #mech .label { stroke: #4a3d78; }
+  #mech .rule { stroke: #3d3263; }
+  #mech .band.b-a { opacity: .75; }
+  #mech .band.b-b { opacity: .22; }
+  #vein-name { color: #f1eefb; text-shadow: 0 0 10px color-mix(in srgb, var(--accent, var(--pink)) 70%, transparent); }
+  #side { color: var(--dim); }
+  #spool-label { color: var(--amber); text-shadow: 0 0 6px #ffb34750; }
+  #played-label { color: var(--vfd); text-shadow: 0 0 6px #39ffa050; }
+  .spokes .hub { fill: #c9c3e2; stroke: #8f89b0; }
+
+  #vfd { justify-content: flex-start; }
+  #cr-bias-row { display: flex; gap: .4rem; align-items: center; }
+  #cr-bias-row .cr-btn { flex: 1 1 0; min-width: 0; padding: .45rem .2rem; font-size: .68rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #cr-bias { flex: none; font-size: .68rem; }
+
+  @media (max-width: 1399px) {
+    #layout { align-items: start; }
+    #vfd { flex: 0 0 auto; }
+  }
 </style>
 </head>
 <body>
@@ -458,29 +586,37 @@
     <div class="panel" id="card">
       <div id="deck-top">
       <div id="cassette" title="The transport. Reels turn while a take plays, the tape counter runs, and the glyph above the feed shows which stage of the machine is running: writing captions, synthesizing, judging, or banking the result.">
-        <div id="tape-label">
-          <span id="vein-name">insert tape</span>
-          <span id="side">SIDE ∞ · CrO₂ · TYPE IV</span>
-        </div>
         <div id="mech-wrap">
-          <svg id="mech" viewBox="0 0 520 120" preserveAspectRatio="xMidYMid meet">
-            <!-- digitizer: bits resolving into tape while the deck synthesizes -->
-            <!-- what the machine is doing right now, above the feed stream:
-                 VRAM and GPU util show that it is busy, never at what -->
-            <g id="stage" transform="translate(54 28)">
-              <path id="stage-glyph" d=""/>
-              <text id="stage-label" y="16">—</text>
-            </g>
-            <g id="digitizer">
-              <rect class="bit b1" x="14" y="52" width="4" height="9"/>
-              <rect class="bit b2" x="26" y="57" width="4" height="9"/>
-              <rect class="bit b3" x="20" y="63" width="4" height="9"/>
-              <rect class="bit b4" x="34" y="50" width="4" height="9"/>
-              <rect class="bit b5" x="42" y="60" width="4" height="9"/>
-              <rect class="bit b6" x="52" y="55" width="4" height="9"/>
-              <path id="feed" d="M 10 60 H 98" />
-            </g>
-            <!-- supply reel: the pack radius IS the spool level -->
+          <svg id="mech" viewBox="0 0 630 400" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <linearGradient id="shellGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#2a2147"/><stop offset=".5" stop-color="#1a1430"/><stop offset="1" stop-color="#0f0b1d"/>
+              </linearGradient>
+              <linearGradient id="labelGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#241d40"/><stop offset="1" stop-color="#17112b"/>
+              </linearGradient>
+              <radialGradient id="packGrad" cx=".5" cy=".5" r=".5">
+                <stop offset=".55" stop-color="#2b1d14"/><stop offset=".8" stop-color="#3d2a1c"/><stop offset="1" stop-color="#22160e"/>
+              </radialGradient>
+              <linearGradient id="glassGrad" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#ffffff" stop-opacity=".16"/><stop offset=".45" stop-color="#ffffff" stop-opacity="0"/>
+              </linearGradient>
+              <clipPath id="winClip"><rect x="140" y="112" width="350" height="126" rx="14"/></clipPath>
+            </defs>
+            <!-- shell -->
+            <rect class="shell" x="3" y="3" width="624" height="394" rx="20"/>
+            <rect class="shell-in" x="12" y="12" width="606" height="376" rx="14"/>
+            <!-- label sticker: title lines on top, accent bands either side of the window -->
+            <rect class="label" x="38" y="30" width="554" height="238" rx="10"/>
+            <line class="rule" x1="58" y1="84" x2="572" y2="84"/>
+            <line class="rule" x1="58" y1="100" x2="572" y2="100"/>
+            <rect class="band b-a" x="38" y="110" width="554" height="14"/>
+            <rect class="band b-b" x="38" y="128" width="554" height="94"/>
+            <rect class="band b-a" x="38" y="226" width="554" height="14"/>
+            <!-- window: smoked plastic over the two reels -->
+            <rect class="window" x="140" y="112" width="350" height="126" rx="14"/>
+            <g clip-path="url(#winClip)">
+              <g transform="translate(225 175) scale(1.4) translate(-140 -60)">
             <g id="supply">
               <circle id="pack-supply" cx="140" cy="60" r="18"/>
               <g class="spokes sp-l" style="transform-origin:140px 60px">
@@ -490,16 +626,8 @@
                 <line x1="130.5" y1="65.5" x2="149.5" y2="54.5"/>
               </g>
             </g>
-            <!-- transport: guide, read head, guide -->
-            <path id="tape-path" d="M 148 77 Q 175 95 205 97 L 238 95 L 282 95 L 315 97 Q 345 95 372 79"/>
-            <path id="tape-glow" d="M 238 95 L 282 95"/>
-            <circle class="guide" cx="205" cy="97" r="5"/>
-            <circle class="guide" cx="315" cy="97" r="5"/>
-            <g id="head">
-              <rect x="240" y="86" width="40" height="16" rx="3"/>
-              <rect x="255" y="82" width="10" height="6" rx="1"/>
-            </g>
-            <!-- take-up reel: grows through the current take -->
+              </g>
+              <g transform="translate(405 175) scale(1.4) translate(-380 -60)">
             <g id="takeup">
               <circle id="pack-take" cx="380" cy="60" r="17"/>
               <g class="spokes sp-r" style="transform-origin:380px 60px">
@@ -509,17 +637,54 @@
                 <line x1="370.5" y1="65.5" x2="389.5" y2="54.5"/>
               </g>
             </g>
+              </g>
+              <rect x="140" y="112" width="350" height="126" fill="url(#glassGrad)" pointer-events="none"/>
+            </g>
+            <rect class="window-rim" x="140" y="112" width="350" height="126" rx="14"/>
+            <!-- bottom section: rollers, head, the tape passing over it -->
+            <path class="trap" d="M 92 292 H 538 L 580 397 H 50 Z"/>
+            <circle class="hole" cx="150" cy="386" r="5"/><circle class="hole" cx="230" cy="386" r="5"/>
+            <circle class="hole" cx="400" cy="386" r="5"/><circle class="hole" cx="480" cy="386" r="5"/>
+            <path id="tape-path" d="M 78 392 L 118 367 L 285 366 L 345 366 L 512 367 L 552 392"/>
+            <path id="tape-glow" d="M 285 366 L 345 366"/>
+            <circle class="guide" cx="118" cy="358" r="9"/>
+            <circle class="guide" cx="512" cy="358" r="9"/>
+            <g id="head">
+              <rect x="283" y="368" width="64" height="20" rx="3"/>
+              <rect x="305" y="360" width="20" height="9" rx="1"/>
+            </g>
+            <!-- what the machine is doing right now, with the bit stream feeding it -->
+            <g transform="translate(78 226) scale(1.6)">
+            <g id="digitizer">
+              <rect class="bit b1" x="14" y="52" width="4" height="9"/>
+              <rect class="bit b2" x="26" y="57" width="4" height="9"/>
+              <rect class="bit b3" x="20" y="63" width="4" height="9"/>
+              <rect class="bit b4" x="34" y="50" width="4" height="9"/>
+              <rect class="bit b5" x="42" y="60" width="4" height="9"/>
+              <rect class="bit b6" x="52" y="55" width="4" height="9"/>
+              <path id="feed" d="M 10 60 H 98" />
+            </g>
+            </g>
+            <g id="stage" transform="translate(315 322) scale(1.55)">
+              <path id="stage-glyph" d=""/>
+              <text id="stage-label" y="16">—</text>
+            </g>
+            <!-- screws -->
+            <g class="screw"><circle cx="26" cy="26" r="7"/><line x1="21" y1="26" x2="31" y2="26"/></g>
+            <g class="screw"><circle cx="604" cy="26" r="7"/><line x1="604" y1="21" x2="604" y2="31"/></g>
+            <g class="screw"><circle cx="26" cy="374" r="7"/><line x1="22" y1="370" x2="30" y2="378"/></g>
+            <g class="screw"><circle cx="604" cy="374" r="7"/><line x1="600" y1="378" x2="608" y2="370"/></g>
           </svg>
-          <span id="counter">0000</span>
         </div>
-        <!-- out of the SVG on purpose: the mech keeps a fixed aspect ratio and
-             centres in the window, so labels inside it floated ~90px above the
-             cassette floor once the window grew. As markup they pin to the
-             bottom whatever height the panel takes. -->
+        <div id="tape-label">
+          <span id="vein-name">insert tape</span>
+          <span id="side">SIDE ∞ · CrO₂ · TYPE IV</span>
+        </div>
         <div id="spool-row" title="Left: how much approved audio is waiting on the spool. Right: how much you have listened to from this station.">
           <span id="spool-label">0 TAKES · 0 MIN</span>
           <span id="played-label">0 TAKES · 0 MIN</span>
         </div>
+        <span id="counter">0000</span>
       </div>
           <div id="meters" title="Machine load, live: CPU (whole machine), GPU utilisation and VRAM in use.">
             <div class="vm"><span class="vm-n" id="sys-cpu-n">—</span>
@@ -546,7 +711,15 @@
         <span class="vu-ch">R</span><div class="vu-rail"><div class="vu-fill" id="vu-r"></div></div>
       </div>
 
-      <audio id="player" controls preload="auto" crossorigin="anonymous"></audio>
+      <audio id="player" preload="auto" crossorigin="anonymous"></audio>
+      <div id="transport" title="Play or pause, scrub through the track, and set the volume.">
+        <button id="pp" title="play / pause">&#9654;</button>
+        <span id="t-cur">0:00</span>
+        <input type="range" id="seek" min="0" max="1000" value="0" step="1" aria-label="position">
+        <span id="t-dur">0:00</span>
+        <span id="vol-ic">&#128266;</span>
+        <input type="range" id="vol" min="0" max="100" value="100" step="1" aria-label="volume">
+      </div>
       <div id="buttons">
         <button id="play" title="Start the radio. It serves approved takes off the spool, avoids playing the same vein twice in a row, and keeps generating in the background while you listen.">▶ PLAY</button>
         <button id="prev" title="back through what already played" disabled>⏮ prev</button>
@@ -730,7 +903,8 @@ function show(t, replay, resume) {
   // any track without an underscored id — and threw BEFORE the player src was
   // set below, so the symptom was silence rather than an obvious error
   const idPart = String(t.id || "").split("_")[1] || String(t.id || "");
-  $("title").textContent = (t.replay ? "ARCHIVE · TAKE " : "TAKE ")
+  // one of your own files is not a "take"
+  $("title").textContent = (t.source ? "" : t.replay ? "ARCHIVE · TAKE " : "TAKE ")
     + (idPart ? idPart.slice(0, 6) : (t.vein_name || "KEEPER").toUpperCase());
   // a library file has no bpm, no critic score and no duration until the
   // player reads it — say what is true rather than printing "null BPM"
@@ -919,9 +1093,44 @@ $("player").addEventListener("ended", () => {
 const player = $("player");
 player.addEventListener("play", () => document.body.classList.add("playing"));
 player.addEventListener("pause", () => document.body.classList.remove("playing"));
+// ---- transport bar: play/pause, scrubber, volume (replaces native controls)
+const fmtT = t => isFinite(t) ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}` : "0:00";
+let seeking = false;
+function paintRange(el) {
+  const lo = parseFloat(el.min || 0), hi = parseFloat(el.max || 100);
+  el.style.setProperty("--p", (hi > lo ? (el.value - lo) / (hi - lo) * 100 : 0) + "%");
+}
+// sliders are also set from code (settings load, playback), so repaint on a timer
+setInterval(() => document.querySelectorAll("input[type=range]").forEach(paintRange), 400);
+document.addEventListener("input", e => { if (e.target.type === "range") paintRange(e.target); });
+$("pp").onclick = () => {
+  if ($("play").style.display !== "none") { $("play").click(); return; }
+  if (player.paused) player.play().catch(() => {}); else player.pause();
+};
+player.addEventListener("play", () => { $("pp").innerHTML = "&#10074;&#10074;"; });
+player.addEventListener("pause", () => { $("pp").innerHTML = "&#9654;"; });
+player.addEventListener("durationchange", () => { $("t-dur").textContent = fmtT(player.duration); });
+$("seek").addEventListener("input", () => {
+  seeking = true;
+  if (isFinite(player.duration)) $("t-cur").textContent = fmtT($("seek").value / 1000 * player.duration);
+});
+$("seek").addEventListener("change", () => {
+  if (isFinite(player.duration)) player.currentTime = $("seek").value / 1000 * player.duration;
+  seeking = false;
+});
+$("vol").value = localStorage.getItem("tapedeck.vol") || 100;
+player.volume = $("vol").value / 100;
+$("vol").addEventListener("input", () => {
+  player.volume = $("vol").value / 100;
+  localStorage.setItem("tapedeck.vol", $("vol").value);
+});
 let lastSaved = 0;
 player.addEventListener("timeupdate", () => {
   const s = player.currentTime || 0;
+  if (!seeking) {
+    $("t-cur").textContent = fmtT(s);
+    if (isFinite(player.duration) && player.duration > 0) $("seek").value = s / player.duration * 1000;
+  }
   if (current && !resumePending && Math.abs(s - lastSaved) >= 2) { lastSaved = s; saveNow(s); }
   $("counter").textContent =
     String(Math.floor(s / 60)).padStart(2, "0") +
