@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import librosa
 import numpy as np
@@ -83,6 +84,29 @@ def analyze(path):
     return f
 
 
+def _worker_init():
+    # one thread per worker: N workers x M BLAS/numba threads would thrash
+    for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+              "NUMBA_NUM_THREADS"):
+        os.environ[v] = "1"
+    try:
+        import threadpoolctl
+        threadpoolctl.threadpool_limits(1)
+    except Exception:
+        pass
+
+
+def _one(path, done):
+    rel = os.path.relpath(path, LIBRARY)
+    try:
+        h = content_hash(path)
+        if (rel, h) in done:
+            return "skip", rel, None
+        return "ok", rel, {"path": rel, "hash": h, **analyze(path)}
+    except Exception as e:
+        return "fail", rel, f"{e!r:.100}"
+
+
 def main():
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     done = set()
@@ -102,21 +126,42 @@ def main():
                 todo.append(os.path.join(root, name))
     print(f"{len(todo)} audio files, {len(done)} already analyzed", flush=True)
 
+    # Tracks are independent and librosa is CPU-bound, so analyse them in a
+    # process pool. Only this process writes the jsonl, so the file stays
+    # append-safe. TAPEDECK_FEATURE_WORKERS overrides the worker count.
+    # Leave one physical core (both hyperthreads) to the OS: pin this process,
+    # and so every worker it forks, to the other logical CPUs.
+    # TAPEDECK_RESERVE_CPU names the core to keep free (default: cpu0's core).
+    cpus = set(os.sched_getaffinity(0))
+    try:
+        keep = os.environ.get("TAPEDECK_RESERVE_CPU", "0")
+        with open(f"/sys/devices/system/cpu/cpu{keep}/topology/thread_siblings_list") as f:
+            reserved = set()
+            for part in f.read().strip().split(","):
+                a, _, b = part.partition("-")
+                reserved |= set(range(int(a), int(b or a) + 1))
+        if cpus - reserved:
+            cpus -= reserved
+            os.sched_setaffinity(0, cpus)
+            print(f"reserved cpus {sorted(reserved)} for the OS", flush=True)
+    except (OSError, ValueError):
+        pass
+    workers = int(os.environ.get("TAPEDECK_FEATURE_WORKERS") or len(cpus))
+    print(f"{workers} worker processes on {len(cpus)} cpus", flush=True)
     ok = fail = skip = 0
-    with open(OUT, "a") as out:
-        for i, path in enumerate(todo, 1):
-            rel = os.path.relpath(path, LIBRARY)
-            try:
-                h = content_hash(path)
-                if (rel, h) in done:
-                    skip += 1
-                    continue
-                rec = {"path": rel, "hash": h, **analyze(path)}
-                out.write(json.dumps(rec) + "\n")
+    with open(OUT, "a") as out, ProcessPoolExecutor(
+            max_workers=workers, initializer=_worker_init) as pool:
+        futs = [pool.submit(_one, path, done) for path in todo]
+        for i, fut in enumerate(as_completed(futs), 1):
+            kind, rel, payload = fut.result()
+            if kind == "skip":
+                skip += 1
+            elif kind == "ok":
+                out.write(json.dumps(payload) + "\n")
                 out.flush()
                 ok += 1
-            except Exception as e:
-                print(f"FAIL {rel}: {e!r:.100}", flush=True)
+            else:
+                print(f"FAIL {rel}: {payload}", flush=True)
                 fail += 1
             print(f"PROG {i} {len(todo)} {rel}", flush=True)
             if i % 25 == 0:

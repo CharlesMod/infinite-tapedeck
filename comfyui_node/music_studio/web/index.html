@@ -65,12 +65,22 @@
     border: 1px solid #322a52; border-radius: 10px;
     padding: .9rem 1rem .7rem; margin-bottom: .9rem;
     box-shadow: inset 0 0 24px #000, inset 0 0 60px #12093080;
-    flex: 1 0 auto; display: flex; flex-direction: column;
-    /* Absorbing the panel's slack is right for a few dozen pixels and absurd
-       for a few hundred: once the rail grew a Keepers section the window went
-       to 556x616 — taller than wide — around a 121px transport. Cap it so the
-       tape window always reads as a landscape window. */
-    max-height: 300px;
+    display: flex; flex-direction: column;
+    /* A real Compact Cassette is 100.4 x 63.8 mm = 1.574 : 1. The body keeps
+       that shape and is sized by the width available AND the height of the
+       screen (everything else in the card needs ~440px), so on a fullscreen
+       display it fills the column instead of leaving dead chassis below.
+       The 420px floor keeps it usable on short windows. */
+    aspect-ratio: 100.4 / 63.8; flex: 0 0 auto;
+    width: min(calc(100% - 7.5rem), max(300px, calc((100vh - 440px) * 1.574)));
+    margin: 0;
+    /* four corner screws */
+    background:
+      radial-gradient(circle at 14px 14px, #2b2347 0 4px, #0d0a17 5px, transparent 6px),
+      radial-gradient(circle at calc(100% - 14px) 14px, #2b2347 0 4px, #0d0a17 5px, transparent 6px),
+      radial-gradient(circle at 14px calc(100% - 14px), #2b2347 0 4px, #0d0a17 5px, transparent 6px),
+      radial-gradient(circle at calc(100% - 14px) calc(100% - 14px), #2b2347 0 4px, #0d0a17 5px, transparent 6px),
+      linear-gradient(180deg, #0d0a17, #090612);
   }
   #tape-label {
     display: flex; justify-content: space-between; align-items: center;
@@ -87,7 +97,7 @@
   #side { font-size: .62rem; color: var(--dim); letter-spacing: .2em; }
   /* the transport centres in the taller window; the SVG keeps its aspect
      ratio, so reels and tape path never distort */
-  #mech-wrap { position: relative; flex: 1 0 auto;
+  #mech-wrap { position: relative; flex: 1 1 auto;
                display: flex; align-items: center; }
   #mech { display: block; width: 100%; height: auto; }
   #mech .bit { fill: var(--cyan); opacity: 0; }
@@ -151,7 +161,7 @@
     border: 1px solid #1c3a2b; border-radius: 8px;
     padding: .65rem .9rem; margin-bottom: .9rem;
     box-shadow: inset 0 0 18px #000e, 0 0 12px #39ffa022;
-    min-height: 4.4em;
+    min-height: 4.4em; flex: 1 0 auto;
   }
   #title { font-size: 1.05rem; letter-spacing: .14em; color: var(--vfd);
            text-shadow: 0 0 9px #39ffa0c0; text-transform: uppercase;
@@ -232,6 +242,27 @@
     -webkit-mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px);
             mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px); }
   .g-min { width: 4.5rem; }
+  #rail .g-name { width: 4.2rem; }
+  #rail .g-min { width: 3.6rem; }
+  /* vertical meter bridge in the cassette window's empty right side */
+  /* cassette and meter bridge share the top of the card: the cassette keeps
+     its true shape at the largest size that fits, the meters take whatever
+     width is left beside it, so there is no dead space either side */
+  #deck-top { display: flex; gap: .9rem; align-items: stretch; margin-bottom: .9rem; flex: 0 0 auto; }
+  #meters { flex: 1 1 auto; min-width: 6.5rem; display: flex; justify-content: space-evenly;
+            gap: .6rem; padding: .9rem .6rem .7rem;
+            background: linear-gradient(180deg, #0d0a17, #090612);
+            border: 1px solid #322a52; border-radius: 10px;
+            box-shadow: inset 0 0 24px #000, inset 0 0 60px #12093080; }
+  .vm { display: flex; flex-direction: column; align-items: center; flex: 1; min-width: 0; }
+  .vm-n { font-size: .62rem; color: var(--text); letter-spacing: .04em; white-space: nowrap; }
+  .vm-l { font-size: .56rem; color: var(--dim); letter-spacing: .15em; margin-top: .25rem; }
+  .vm-bar { flex: 1; width: 100%; max-width: 34px; margin-top: .2rem; position: relative;
+            background: #0a0715; border: 1px solid #241c3d; border-radius: 3px; overflow: hidden; }
+  .vm-fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0;
+    transition: height .6s ease;
+    -webkit-mask: repeating-linear-gradient(0deg, #000 0 4px, transparent 4px 6px);
+            mask: repeating-linear-gradient(0deg, #000 0 4px, transparent 4px 6px); }
   /* auto, so any slack the capped cassette no longer eats collects here
      instead of stretching one element out of proportion */
   #foot { margin-top: auto; padding-top: 1rem; color: #4c4768; font-size: .62rem; letter-spacing: .06em; }
@@ -342,13 +373,47 @@
   /* capture = dubbing section */
   #deck-line { font-size: .66rem; color: var(--cyan); letter-spacing: .08em;
     margin-top: .5rem; text-shadow: 0 0 6px #00e5ff50; opacity: .9;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    white-space: normal; overflow-wrap: anywhere; }
   #cap-state { font-size: .68rem; color: var(--dim); margin-bottom: .35rem;
                letter-spacing: .08em; text-transform: uppercase; }
   #cap-state.running { color: var(--red); text-shadow: 0 0 7px var(--red); }
   #cap-state.running::before { content: "● "; animation: blink 1.1s steps(2) infinite; }
   #cap-state.failed { color: var(--red); }
   @keyframes blink { 50% { opacity: .15; } }
+
+  /* wide / fullscreen screens: use the width instead of a centred 980px column.
+     The deck takes the larger share; the rail's sections flow into columns
+     (each section stays whole). */
+  @media (min-width: 1400px) {
+    /* one screen, no page scroll: the title and capture strip take what they
+       need, the two panels share the rest of the window height exactly */
+    html, body { height: 100%; }
+    body { display: flex; flex-direction: column; overflow: hidden;
+           min-height: 0; padding: 1rem 1.8rem 1rem; }
+    h1 { margin-bottom: .8rem; flex: none; }
+      #layout { flex: 1 1 auto; min-height: 0; width: 100%;
+              grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+              grid-template-rows: minmax(0, 1fr);
+              max-width: 2400px; margin: 0 auto; gap: 1.6rem; }
+    /* the rail: two columns that fill its height exactly. Fixed-size sections
+       take what they need; the three lists (setlist, keepers, critic) share
+       the rest and scroll inside their own boxes, so the rail never does */
+    #rail { overflow: hidden; min-height: 0; display: flex; flex-direction: column; }
+    #rail-cols { flex: 1 1 auto; min-height: 0; display: grid;
+                 grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.6rem; }
+    .rail-col { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+    .rail-col .rail-sec { flex: none; }
+    .rail-col .rail-sec.grow { flex: 1 1 0; min-height: 7rem;
+                               display: flex; flex-direction: column; }
+    .rail-sec.grow #setlist, .rail-sec.grow #kp-list, .rail-sec.grow #cr-list {
+      max-height: none; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+    /* the card is a size container, so the cassette sizes itself from the
+       card's real height (cqh) rather than a guess about the window */
+    #card { container-type: size; min-height: 0; overflow-y: auto; }
+    #cassette { width: min(calc(100% - 7.5rem), max(300px, calc((100cqh - 330px) * 1.574))); }
+    #vfd { flex: 1 1 auto; min-height: 5.5em; overflow: hidden; }
+  }
+
   .barwrap { background: #0a0715; border: 1px solid #241c3d; border-radius: 3px;
              height: 8px; overflow: hidden; margin: .3rem 0 .12rem; }
   .bar { height: 100%; width: 0; transition: width .5s;
@@ -357,8 +422,9 @@
             mask: repeating-linear-gradient(90deg, #000 0 5px, transparent 5px 7px); }
   .barlabel { display: flex; justify-content: space-between; font-size: .62rem;
               color: var(--dim); }
-  .barlabel span:first-child { max-width: 66%; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
+  .barlabel span:first-child { max-width: 66%; white-space: normal;
+    overflow-wrap: anywhere; }
+  .barlabel { gap: .6rem; align-items: flex-start; }
   #dub-toggle { padding: .18rem .55rem; font-size: .72rem; margin-left: .5rem;
                 vertical-align: middle; border-radius: 7px; }
   #dub-toggle.armed { color: var(--red); border-color: #7a2830;
@@ -383,6 +449,7 @@
   <div id="layout">
 
     <div class="panel" id="card">
+      <div id="deck-top">
       <div id="cassette" title="The transport. Reels turn while a take plays, the tape counter runs, and the glyph above the feed shows which stage of the machine is running: writing captions, synthesizing, judging, or banking the result.">
         <div id="tape-label">
           <span id="vein-name">insert tape</span>
@@ -447,6 +514,18 @@
           <span id="played-label">0 TAKES · 0 MIN</span>
         </div>
       </div>
+          <div id="meters" title="Machine load, live: CPU (whole machine), GPU utilisation and VRAM in use.">
+            <div class="vm"><span class="vm-n" id="sys-cpu-n">—</span>
+              <div class="vm-bar"><div class="vm-fill" id="sys-cpu" style="background:var(--cyan)"></div></div>
+              <span class="vm-l">CPU</span></div>
+            <div class="vm"><span class="vm-n" id="sys-gpu-n">—</span>
+              <div class="vm-bar"><div class="vm-fill" id="sys-gpu" style="background:var(--amber)"></div></div>
+              <span class="vm-l">GPU</span></div>
+            <div class="vm"><span class="vm-n" id="sys-vram-n">—</span>
+              <div class="vm-bar"><div class="vm-fill" id="sys-vram" style="background:linear-gradient(0deg,var(--pink),var(--red))"></div></div>
+              <span class="vm-l">VRAM</span></div>
+          </div>
+      </div>
 
       <div id="vfd" title="What is playing: the vein it came from, its length, tempo and how closely it matched your music. Tap the description or the lyrics to expand them.">
         <div id="title">PRESS PLAY</div>
@@ -476,6 +555,8 @@
 
     <div class="panel" id="rail">
       <span class="plate">RACK UNIT · STATIONS</span>
+      <div id="rail-cols">
+      <div class="rail-col" id="rail-a">
       <div class="rail-sec">
         <div class="rail-h" title="The folder of music this radio is modelled on. Everything below — the spool, the critic, the keepers — belongs to whichever station is selected here."
              >Station</div>
@@ -495,6 +576,18 @@
       </div>
 
       <div class="rail-sec">
+        <div class="rail-h" title="The AI listening pass, which describes each of your tracks so the generator knows more than tempo and brightness. Pause it to hand the GPU back to the radio; it resumes where it stopped."
+             >Dubbing
+          <button id="dub-toggle" title="pause / resume the capture" disabled>⏵</button>
+        </div>
+        <div id="cap-state">no capture running</div>
+        <div class="barwrap"><div class="bar" id="cap-stagebar"></div></div>
+        <div class="barlabel"><span id="cap-track">—</span><span id="cap-count"></span></div>
+        <div class="barwrap"><div class="bar" id="cap-totalbar"></div></div>
+        <div class="barlabel"><span id="cap-stage"></span><span id="cap-pct"></span></div>
+      </div>
+
+      <div class="rail-sec grow">
         <div class="rail-h" title="The source tracks this station learned from. Analysed files show tempo and key; unanalysed ones are waiting for the next capture. Excluding a track keeps the file but drops it from the taste model."
              >Setlist <span id="sl-src" style="text-transform:none;letter-spacing:0;color:#14663f"></span></div>
         <div id="sl-tools">
@@ -506,17 +599,11 @@
         <div id="sl-count"></div>
       </div>
 
+      </div>
+      <div class="rail-col" id="rail-b">
       <div class="rail-sec">
         <div class="rail-h" title="What the machine is doing. GPU and VRAM show it is busy; SPEED shows how fast takes are actually being produced, in multiples of realtime — above 1.0x the radio outruns a listener."
-             >System</div>
-        <div class="g-row"><span class="g-name">GPU</span>
-          <div class="g-bar"><div class="g-fill" id="sys-gpu"
-            style="background:var(--amber)"></div></div>
-          <span class="g-min" id="sys-gpu-n">—</span></div>
-        <div class="g-row"><span class="g-name">VRAM</span>
-          <div class="g-bar"><div class="g-fill" id="sys-vram"
-            style="background:linear-gradient(90deg,var(--pink),var(--red))"></div></div>
-          <span class="g-min" id="sys-vram-n">—</span></div>
+             >Engine</div>
         <div class="g-row"><span class="g-name">SPEED</span>
           <div class="g-bar"><div class="g-fill" id="sys-speed"
             style="background:var(--vfd)"></div></div>
@@ -527,13 +614,13 @@
           <div id="sp-ends"><span>← faster</span><span>quality →</span></div>
           <div id="sp-note"></div>
           <div id="sp-head" style="margin-top:.5rem" title="How long takes should aim to be. The generator frequently stops early, so this is an aim, not a promise."><span>SONG LENGTH</span><span id="ln-val">vein default</span></div>
-          <input type="range" id="ln-slider" min="45" max="300" step="15" value="45" title="How long to aim for. Leftmost lets each vein use the length of its own source tracks, which is usually the right answer. The model often ends early regardless, so treat this as an aim rather than a guarantee.">
-          <div id="sp-ends"><span>shorter</span><span>longer →</span></div>
+          <input type="range" id="ln-slider" min="-8" max="8" step="1" value="0" title="How long to aim for. The centre lets each vein use the length of its own source tracks, which is usually the right answer; left aims shorter, right aims longer. The model often ends early regardless, so treat this as an aim rather than a guarantee.">
+          <div id="sp-ends"><span>← shorter</span><span>default</span><span>longer →</span></div>
         </div>
         <div id="deck-line">DECK · <span id="deck-msg">listening for the daemon…</span></div>
       </div>
 
-      <div class="rail-sec">
+      <div class="rail-sec grow">
         <div class="rail-h" title="Takes you pressed KEEP on. They survive the janitor forever, and can be replayed, renamed and exported. Select one to enable the controls."
              >Keepers
           <span id="kp-count" style="text-transform:none;letter-spacing:0;
@@ -554,7 +641,7 @@
         </div>
       </div>
 
-      <div class="rail-sec">
+      <div class="rail-sec grow">
         <div class="rail-h" title="Every take is scored against this station&#39;s own music before you hear it, and rejects are deleted. This is the only record they existed. Stricter accepts fewer and closer takes; looser banks more."
              >Critic
           <span id="cr-rate" style="text-transform:none;letter-spacing:0;
@@ -570,17 +657,7 @@
         <div id="cr-hint"></div>
         <div id="cr-list"></div>
       </div>
-
-      <div class="rail-sec" style="margin-bottom:0">
-        <div class="rail-h" title="The AI listening pass, which describes each of your tracks so the generator knows more than tempo and brightness. Pause it to hand the GPU back to the radio; it resumes where it stopped."
-             >Dubbing
-          <button id="dub-toggle" title="pause / resume the capture" disabled>⏵</button>
-        </div>
-        <div id="cap-state">no capture running</div>
-        <div class="barwrap"><div class="bar" id="cap-stagebar"></div></div>
-        <div class="barlabel"><span id="cap-track">—</span><span id="cap-count"></span></div>
-        <div class="barwrap"><div class="bar" id="cap-totalbar"></div></div>
-        <div class="barlabel"><span id="cap-stage"></span><span id="cap-pct"></span></div>
+      </div>
       </div>
     </div>
 
@@ -616,8 +693,20 @@ async function feedback(action) {
   } catch (e) { return null; }
 }
 
-function show(t, replay) {
+// ---- resume across page reloads: remember the track and where we were in it
+function saveNow(time) {
+  try {
+    localStorage.setItem("tapedeck.now", JSON.stringify({
+      t: current, time: time || 0,
+      playing: !$("player").paused && !$("player").ended }));
+  } catch (e) {}
+}
+let resumeAt = 0;          // seek target for the track being loaded
+let resumePending = false; // a restored track is waiting for PLAY
+
+function show(t, replay, resume) {
   current = t;
+  if (!resume) saveNow(0);
   const accent = VEIN_COLORS[t.vein] || "#888";
   document.documentElement.style.setProperty("--accent", accent);
   $("vein-name").textContent = t.vein_name;
@@ -663,10 +752,58 @@ function show(t, replay) {
         `${Math.floor(p.duration / 60)}:${String(Math.round(p.duration) % 60).padStart(2, "0")}`);
     }, { once: true });
   }
-  p.play().catch(() => {});
+  if (resume && resumeAt > 0) {
+    const at = resumeAt;
+    p.addEventListener("loadedmetadata", () => {
+      if (isFinite(p.duration) && at < p.duration - 1) p.currentTime = at;
+    }, { once: true });
+  }
+  // a restored track waits for PLAY: browsers block autoplay after a reload,
+  // and PLAY is also the click that wakes the VU meters
+  if (!resume) p.play().catch(() => {});
   updateButtons();
   refreshGauge();
 }
+
+function restoreNow() {
+  let s;
+  try { s = JSON.parse(localStorage.getItem("tapedeck.now") || "null"); } catch (e) { return; }
+  if (!s || !s.t || !s.t.url) return;
+  hist.push(s.t);
+  pos = hist.length - 1;
+  resumeAt = s.time || 0;
+  resumePending = true;
+  show(s.t, false, true);
+  const m = Math.floor(resumeAt / 60), sec = Math.floor(resumeAt % 60);
+  $("stats").textContent += ` · RESUME AT ${m}:${String(sec).padStart(2, "0")} — PRESS PLAY`;
+  // It was playing when the page went away: carry straight on. Browsers may
+  // refuse autoplay after a reload — then the PLAY button above still works.
+  if (s.playing) {
+    $("player").play().then(() => {
+      resumePending = false;
+      $("play").style.display = "none";
+      $("stats").textContent = $("stats").textContent.replace(/ · RESUME AT .*$/, "");
+      // the VU meters need an AudioContext, which needs a click: wire them up
+      // on the first one. Creating it now would start it suspended — and a
+      // suspended context swallows the element's sound.
+      const arm = () => initVU();
+      document.addEventListener("pointerdown", arm, { once: true });
+      document.addEventListener("keydown", arm, { once: true });
+    }).catch(() => {
+      // the browser said no: nothing is playing now, so don't remember it as
+      // playing — a paused deck must stay paused across a refresh
+      try {
+        const o = JSON.parse(localStorage.getItem("tapedeck.now") || "null");
+        if (o) { o.playing = false; localStorage.setItem("tapedeck.now", JSON.stringify(o)); }
+      } catch (e) {}
+      toast("autoplay blocked by the browser — press PLAY");
+    });
+  }
+}
+// keep the saved position fresh right up to the moment the tab goes away
+addEventListener("pagehide", () => {
+  if (current && !resumePending) saveNow($("player").currentTime || 0);
+});
 
 function updateButtons() { $("prev").disabled = hist.length === 0 || pos === 0; }
 
@@ -728,7 +865,15 @@ async function seedHistory() {
   updateButtons();
 }
 
-$("play").onclick = () => { $("play").style.display = "none"; initVU(); next(); };
+$("play").onclick = () => {
+  $("play").style.display = "none"; initVU();
+  if (resumePending) {          // pick up the restored track where it stopped
+    resumePending = false;
+    $("player").play().catch(() => {});
+    return;
+  }
+  next();
+};
 $("prev").onclick = prev;
 $("skip").onclick = () => { feedback("skip"); toast("next"); next(); };
 $("dislike").onclick = () => { feedback("dislike"); toast("less of that vein"); next(); };
@@ -758,8 +903,10 @@ $("player").addEventListener("ended", () => {
 const player = $("player");
 player.addEventListener("play", () => document.body.classList.add("playing"));
 player.addEventListener("pause", () => document.body.classList.remove("playing"));
+let lastSaved = 0;
 player.addEventListener("timeupdate", () => {
   const s = player.currentTime || 0;
+  if (current && !resumePending && Math.abs(s - lastSaved) >= 2) { lastSaved = s; saveNow(s); }
   $("counter").textContent =
     String(Math.floor(s / 60)).padStart(2, "0") +
     String(Math.floor(s % 60)).padStart(2, "0");
@@ -885,7 +1032,7 @@ async function loadStations() {
   for (const st of s.stations) {
     const o = document.createElement("option");
     o.value = st.slug;
-    o.textContent = st.name + (st.ready ? "" : " (capturing…)");
+    o.textContent = st.name + (st.ready ? "" : " (not ready yet)");
     if (st.slug === s.active) o.selected = true;
     sel.appendChild(o);
   }
@@ -1050,8 +1197,10 @@ async function pollCapture() {
   const st = $("cap-state");
   if (s.state === "running") {
     const stage = (s.stages || [])[s.stage_idx];
-    st.textContent = `dubbing "${s.station || ""}" — ${stage ? stage.name : "…"}` +
-      (cardOwner === "dubbing" ? " · ON CARD" : " · waiting for the card");
+    const yielded = ["generation", "lyricist", "other"].includes(cardOwner);
+    st.textContent = `capturing "${s.station || ""}" — ${stage ? stage.name : "…"}` +
+      (cardOwner === "dubbing" ? " · ON CARD"
+        : yielded ? " · card busy, yielding to the radio" : " · card free");
     st.className = "running";
     if (s.track_n > 0) {
       $("cap-stagebar").style.width = (s.track_i / s.track_n * 100) + "%";
@@ -1175,6 +1324,8 @@ const STAGES = {
   banked:     { d: "M -7 0 L -2 5 L 8 -6", label: "banked" },
   rejected:   { d: "M -6 -6 L 6 6 M 6 -6 L -6 6", label: "rejected" },
   waiting:    { d: "M -4 -6 L -4 6 M 4 -6 L 4 6", label: "waiting" },
+  // a magnifying glass: the card is free and the capture is listening to the library
+  capturing:  { d: "M 3 -3 A 6 6 0 1 0 -9 -3 A 6 6 0 1 0 3 -3 M 1.5 1.5 L 8 8", label: "capturing" },
   full:       { d: "M -8 4 L -3 -4 L 2 3 L 8 -5", label: "spool full" },
 };
 
@@ -1192,7 +1343,10 @@ function stageFrom(msg) {
 
 let stageNow = null;
 function paintStage(msg) {
-  const key = stageFrom(msg);
+  let key = stageFrom(msg);
+  // the daemon says "holding" until a capture exists — but while one is
+  // running that is not waiting, the library is being listened to
+  if ((key === "waiting" || !key) && dubState === "running") key = "capturing";
   const g = $("stage");
   if (!key) { g.classList.remove("on", "verdict"); stageNow = null; return; }
   if (key !== stageNow) {
@@ -1208,11 +1362,15 @@ function paintStage(msg) {
 async function pollGpu() {
   try {
     const s = await (await fetch("/music_studio/gpu")).json();
+    if (s.cpu != null) {
+      $("sys-cpu").style.height = s.cpu + "%";
+      $("sys-cpu-n").textContent = s.cpu + "%";
+    }
     if (s.error) return;
-    $("sys-gpu").style.width = s.util + "%";
+    $("sys-gpu").style.height = s.util + "%";
     $("sys-gpu-n").textContent = s.util + "%";
     const pct = s.vram_used_mb / s.vram_total_mb * 100;
-    $("sys-vram").style.width = pct + "%";
+    $("sys-vram").style.height = pct + "%";
     $("sys-vram-n").textContent = (s.vram_used_mb / 1024).toFixed(1) + "G";
   } catch (e) { /* server restarting */ }
   try {
@@ -1231,8 +1389,9 @@ async function pollGpu() {
     };
     const age = d.age_s == null ? "" :
       d.age_s < 90 ? ` · ${d.age_s}s ago` : ` · ${Math.floor(d.age_s / 60)}m ago`;
-    $("deck-msg").textContent =
-      (OWNER[d.owner] || d.owner) + "  —  " + (d.msg || "…") + age;
+    const ownerTxt = d.owner === "idle" && dubState === "running"
+      ? "· card free (capture is on the CPU)" : (OWNER[d.owner] || d.owner);
+    $("deck-msg").textContent = ownerTxt + "  —  " + (d.msg || "…") + age;
     // the waiting screen explains itself with the daemon's own words
     if ($("title").textContent.startsWith("SYNTHESIZING"))
       $("stats").textContent =
@@ -1242,7 +1401,7 @@ async function pollGpu() {
 
 /* --------------------------------------------------------------- init */
 
-seedHistory();
+seedHistory().then(restoreNow);
 loadStations();
 loadSetlist();
 refreshGauge();
@@ -1414,10 +1573,7 @@ async function spLoad() {
     const sl = $("sp-slider");
     sl.min = d.min; sl.max = d.max; sl.step = d.step; sl.value = d.steps;
     spPaint(d.steps, d.effective);
-    const ln = $("ln-slider");
-    ln.min = d.len_min - d.len_step; ln.max = d.len_max; ln.step = d.len_step;
-    ln.value = d.target_s || (d.len_min - d.len_step);
-    lnPaint(parseInt(ln.value));
+    lnBuild(d);
   } catch {}
 }
 
@@ -1432,21 +1588,46 @@ $("sp-slider").addEventListener("change", async e => {
     toast(`${r.effective} steps — applies to the next take`);
   } catch {}
 });
-// song length: 0 (leftmost) means "use each vein's own measured envelope",
-// which is the honest default — the envelope comes from how long the tracks
-// in that vein actually are.
-function lnPaint(v) {
-  $("ln-val").textContent = v <= 45 ? "vein default"
-    : `${Math.floor(v / 60)}:${String(v % 60).padStart(2, "0")}`;
+// song length: the CENTRE notch is "vein default" (target 0 — each vein uses
+// its own measured envelope, the honest default). Notches to the left aim
+// shorter, to the right longer. The slider holds a notch index (-N..N) and
+// LN maps it to seconds; the server still only ever sees target_s.
+let LN = { short: [], long: [] };
+function lnBuild(d) {
+  const step = d.len_step || 15, lo = d.len_min || 60, hi = d.len_max || 300;
+  const mid = Math.round((lo + hi) / 2 / step) * step;
+  LN = { short: [], long: [] };
+  for (let t = lo; t < mid; t += step) LN.short.push(t);
+  for (let t = mid + step; t <= hi; t += step) LN.long.push(t);
+  const ln = $("ln-slider");
+  ln.min = -LN.short.length; ln.max = LN.long.length; ln.step = 1;
+  ln.value = lnIndex(d.target_s || 0);
+  lnPaint(lnSeconds(parseInt(ln.value)));
 }
-$("ln-slider").addEventListener("input", e => lnPaint(parseInt(e.target.value)));
+function lnSeconds(i) {
+  return i < 0 ? LN.short[LN.short.length + i] : i > 0 ? LN.long[i - 1] : 0;
+}
+function lnIndex(sec) {
+  if (!sec) return 0;
+  let best = 0, bd = Infinity;
+  LN.short.forEach((t, k) => { const dd = Math.abs(t - sec);
+    if (dd < bd) { bd = dd; best = k - LN.short.length; } });
+  LN.long.forEach((t, k) => { const dd = Math.abs(t - sec);
+    if (dd < bd) { bd = dd; best = k + 1; } });
+  return best;
+}
+function lnPaint(sec) {
+  $("ln-val").textContent = !sec ? "vein default"
+    : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+}
+$("ln-slider").addEventListener("input", e => lnPaint(lnSeconds(parseInt(e.target.value))));
 $("ln-slider").addEventListener("change", async e => {
-  const v = parseInt(e.target.value);
+  const v = lnSeconds(parseInt(e.target.value));
   try {
     const r = await (await fetch("/music_studio/speed", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_s: v <= 45 ? 0 : v }) })).json();
-    lnPaint(r.target_s || 45);
+      body: JSON.stringify({ target_s: v }) })).json();
+    lnPaint(r.target_s || 0);
     toast(r.target_s ? `aiming for ${Math.round(r.target_s)}s takes`
                      : "back to each vein's own lengths");
   } catch {}
