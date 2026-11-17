@@ -577,6 +577,15 @@
     #layout { align-items: start; }
     #vfd { flex: 0 0 auto; }
   }
+
+  /* the per-vein spool gauge lives in the rack: under the buttons it pushed
+     the card past its height and squashed the now-playing display */
+  #gauge { margin-top: 0; }
+  #rail #gauge .g-name { width: 7.2rem; }
+  #rail #gauge .g-min { width: 3.2rem; text-align: right; }
+  #gauge:empty::after { content: "Nothing on the spool yet."; font-size: .68rem; color: var(--dim); }
+
+  .kp-row, .cr-row { font-size: .74rem; }
 </style>
 </head>
 <body>
@@ -728,7 +737,6 @@
         <button id="keep" title="save forever + more of this vein">★ keep</button>
         <button id="shuffle" title="off · generated · everything">⤨ shuffle</button>
       </div>
-      <div id="gauge" title="How the spool is divided between veins, and how your keep and dislike votes have re-weighted them. A vein you keep from grows; one you dislike shrinks."></div>
       <div id="foot">next = "not now" · dislike = "less of this" · keep = saved
         forever · <a href="import.html">dubbing bay</a></div>
     </div>
@@ -807,6 +815,12 @@
           <div id="sp-ends"><span>← shorter</span><span>default</span><span>longer →</span></div>
         </div>
         <div id="deck-line">DECK · <span id="deck-msg">listening for the daemon…</span></div>
+      </div>
+
+      <div class="rail-sec">
+        <div class="rail-h" title="How the spool is divided between veins, and how your keep and dislike votes have re-weighted them. A vein you keep from grows; one you dislike shrinks."
+             >Spool</div>
+        <div id="gauge"></div>
       </div>
 
       <div class="rail-sec grow">
