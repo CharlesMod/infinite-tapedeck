@@ -30,6 +30,10 @@ itself (3) → dependencies (4) → check (5) → capture (6) → run (7).
 
 ### On Windows: use WSL2, not native Windows
 
+**The quick way:** `install.ps1` (see the README) does all of this for you —
+WSL2, Ubuntu, the GPU check, copying your music into Linux, the install, and
+Start-menu shortcuts. The notes below are the manual route.
+
 Native Windows is **not supported**, and it will not work if you try. The
 radio identifies who is holding the GPU by reading `/proc/<pid>/cmdline`,
 coordinates the captioner and the generator with POSIX signals, and asks

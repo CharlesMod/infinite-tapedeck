@@ -104,6 +104,22 @@ or without cloning first:
 curl -fsSL https://raw.githubusercontent.com/CharlesMod/infinite-tapedeck/main/install.sh | bash -s -- --music ~/Music
 ```
 
+**Windows** (NVIDIA GPU, Windows 10 22H2+ or 11): in PowerShell,
+
+```powershell
+irm https://raw.githubusercontent.com/CharlesMod/infinite-tapedeck/main/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Music "$env:USERPROFILE\Music"
+```
+
+It sets up WSL2 + Ubuntu (one reboot and a Linux username the first time),
+copies your music into Linux, runs the same installer inside, and adds a
+**TAPEDECK** shortcut to the Start menu and desktop. Keep its small window
+open while the deck runs.
+
+**macOS is not supported yet**: MiniMax Music 3 runs on CUDA, and nobody has
+shown it generating on Apple's GPU (MPS). If you have a Mac with 32 GB+ and
+want to try, see AGENTS.md.
+
 Then open `http://<host>:8188/extensions/music_studio/index.html` and press
 PLAY. The deck plays your own music while the first generated takes are made.
 
