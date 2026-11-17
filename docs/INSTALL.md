@@ -11,6 +11,13 @@ once, in step 1, and the rest of this document is unambiguous.
 Order matters: ComfyUI and its environment (1) → model weights (2) → tapedeck
 itself (3) → dependencies (4) → check (5) → capture (6) → run (7).
 
+
+> **The quick way:** `./install.sh --music /path/to/music` does every step
+> below (1-5 and 8) and starts the deck. This page is the manual route, and
+> the reference for what the installer does. Step 6's listening pass needs a
+> one-time OK: the deck's **Accept & start listening pass** button, or
+> `--accept-flamingo` on the command line.
+
 ---
 
 ## 0. What you need
@@ -143,6 +150,14 @@ This runs inventory → features → CLAP embeddings → **the AI listening pass
 only processes new or changed files.
 
 ### The listening pass runs by default, and should
+
+**It needs your OK once.** The model is ~17 GB of NVIDIA weights under
+NVIDIA's licence, so it is never downloaded without consent: press
+**Accept & start listening pass** in the deck (Dubbing section), or add
+`--accept-flamingo` to the command above. Without consent the capture runs
+everything else and the deck shows the button; accepting resumes the capture
+with the listening pass, reusing every finished stage. The answer is stored
+as `flamingo_consent` in `radio/speed.json`.
 
 [Music Flamingo](https://huggingface.co/nvidia/music-flamingo-2601-hf)
 listens to every track and writes a paragraph describing it — genre, tempo
