@@ -87,6 +87,14 @@ def active():
     return _load().get("active", LEGACY_SLUG)
 
 
+def can_generate(slug=None):
+    """Can the radio make takes for this station (default: the active one)?
+    Only once its capture has written essence cards — before that a running
+    daemon just holds, so yielding the GPU to it would deadlock a capture."""
+    p = paths(slug or active())
+    return os.path.exists(os.path.join(p["analysis"], "essence_cards.json"))
+
+
 def set_active(slug):
     reg = _load()
     if slug not in reg["stations"]:

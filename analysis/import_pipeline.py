@@ -420,9 +420,20 @@ def radio_is_live():
     does not exist and waits forever for a tank nothing will fill."""
     try:
         with open(f"{BASE}/radio/daemon_state.json") as f:
-            return time.time() - int(json.load(f).get("ts", 0)) < 300
+            alive = time.time() - int(json.load(f).get("ts", 0)) < 300
     except (OSError, ValueError, TypeError, AttributeError):
         return False
+    # A live daemon is not enough: until the active station has a capture it
+    # only holds, and yielding to it deadlocks the capture that would free it
+    # (every fresh install starts the daemon before the first capture).
+    if not alive:
+        return False
+    try:
+        sys.path.insert(0, f"{BASE}/radio")
+        import stations
+        return stations.can_generate()
+    except Exception:
+        return True
 
 
 def count_audio(src):
