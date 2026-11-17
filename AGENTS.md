@@ -105,6 +105,12 @@ tapedeck logs       # follows run/comfy.log and run/daemon.log
 tapedeck capture    # re-capture the active station after adding music
 ```
 
+`tapedeck tray` (tray/tapedeck_tray.py) owns the same run/*.pid processes:
+radio on/off writes/removes radio/DISABLED (tank_daemon refuses to start while
+it exists), captioning pause/resume calls /music_studio/import/{pause,resume},
+Quit pauses captioning, stops the daemon, POSTs /interrupt + /free, then stops
+ComfyUI.
+
 Capture progress: `analysis/import_progress.json` (stage, track_i/track_n,
 overall_pct, `captions_pending_consent`), log in `analysis/capture.log`.
 Stages: inventory → features (CPU, parallel) → embeddings (GPU) → captions

@@ -30,4 +30,5 @@ radio/daemon_state.json
 radio/config.json
 radio/LISTENER_WAITING
 radio/PAUSE
+radio/DISABLED
 analysis/caption_attempting.txt
