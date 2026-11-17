@@ -24,6 +24,32 @@ prints the deck URL. Tell the user to:
    yes (then `--accept-flamingo` on a capture, or POST
    `/music_studio/consent {"accept": true}`, records it).
 
+## Windows
+
+Use `install.ps1` (PowerShell). It installs WSL2 if needed (admin, then one
+reboot, then run it again), installs Ubuntu-24.04 (the user creates a Linux
+username once), checks the GPU inside WSL, copies the music into the Linux
+filesystem (`~/tapedeck-music`; `-LinkMusic` reads it from `/mnt/c` instead,
+slower), runs `install.sh` inside WSL, and creates Start menu/desktop
+shortcuts (`%LOCALAPPDATA%\Tapedeck\tapedeck-start.cmd`). WSL stops a distro
+soon after its last console closes, so the TAPEDECK window must stay open
+(minimised) while the radio runs. Inside WSL everything below applies
+unchanged; reach it with `wsl -d Ubuntu-24.04`. Native Windows (no WSL) is
+not supported: the radio uses /proc, POSIX signals and systemd.
+
+If the GPU is not visible inside WSL: update the NVIDIA Windows driver (do
+NOT install a Linux NVIDIA driver inside WSL), then `wsl --update`.
+
+## macOS
+
+Not supported yet. The generator (MiniMax Music 3 in ComfyUI) needs CUDA;
+whether it runs on Apple's MPS backend is untested, and would need roughly
+32 GB+ unified memory. The listening pass loads Flamingo in 8-bit through
+bitsandbytes, which is CUDA-only. Porting order if someone tries: (1) load
+Music 3 in ComfyUI on MPS and time one take; only if that works, (2) replace
+nvidia-smi/`/proc` GPU-sharing code in radio/tank_daemon.py and
+analysis/caption_pass.py, (3) load Flamingo in fp16 on MPS.
+
 ## Before you run anything, check
 
 | check | command | needs |
