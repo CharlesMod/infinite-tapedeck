@@ -41,6 +41,7 @@ def _find_base():
 BASE = _find_base()
 sys.path.insert(0, f"{BASE}/radio")
 import stations  # noqa: E402
+import consent  # noqa: E402
 
 ANALYSIS_SCRIPTS = f"{BASE}/analysis"
 IMPORT_PROGRESS = f"{ANALYSIS_SCRIPTS}/import_progress.json"
@@ -882,7 +883,7 @@ async def station_create(request):
         slug = stations.create(name, source)
     except NotADirectoryError as e:
         return web.json_response({"error": f"not a directory: {e}"}, status=400)
-    err = _spawn_import(slug, bool(data.get("with_captions")))
+    err = _spawn_import(slug, bool(data.get("with_captions", True)))
     if err:
         return web.json_response({"ok": True, "slug": slug,
                                   "capture": f"not started: {err}"})
@@ -1040,7 +1041,8 @@ async def import_resume(request):
     slug = st.get("station")
     if not slug:
         return web.json_response({"error": "no station recorded"}, status=400)
-    err = _spawn_import(slug, bool(st.get("with_captions")))
+    err = _spawn_import(slug, bool(st.get("with_captions")
+                                   or st.get("captions_pending_consent")))
     if err:
         return web.json_response({"error": err}, status=409)
     return web.json_response({"ok": True, "station": slug})
@@ -1153,10 +1155,53 @@ async def import_start(request):
             break
     if slug is None:
         slug = stations.create(os.path.basename(source) or "station", source)
-    err = _spawn_import(slug, bool(data.get("with_captions")))
+    err = _spawn_import(slug, bool(data.get("with_captions", True)))
     if err:
         return web.json_response({"error": err}, status=409)
     return web.json_response({"ok": True, "station": slug})
+
+
+@PromptServer.instance.routes.get("/music_studio/consent")
+async def consent_status(request):
+    """Has the user OK'd the listening pass (NVIDIA Music Flamingo)?"""
+    st = _import_state()
+    return web.json_response({
+        "consent": consent.given(), "cached": consent.model_cached(),
+        "download_gb": consent.DOWNLOAD_GB, "model_url": consent.MODEL_URL,
+        "pending": bool(st.get("captions_pending_consent"))})
+
+
+@PromptServer.instance.routes.post("/music_studio/consent")
+async def consent_set(request):
+    """The deck's Accept button. Accepting starts the listening pass on the
+    active station right away: a capture running without it is stopped and
+    resumed with it (every finished stage is cached, so nothing is redone)."""
+    import asyncio
+    data = await request.json()
+    accept = bool(data.get("accept"))
+    consent.record(accept)
+    if not accept:
+        return web.json_response({"ok": True, "consent": False})
+    st = _import_state()
+    slug = st.get("station") or stations.active()
+    if st.get("state") == "running":
+        if st.get("with_captions"):
+            return web.json_response({"ok": True, "consent": True,
+                                      "capture": "already listening"})
+        try:
+            os.kill(int(st["pid"]), 15)
+        except (OSError, KeyError, TypeError, ValueError):
+            pass
+        for _ in range(60):          # let it write its cancelled state
+            await asyncio.sleep(0.5)
+            if _import_state().get("state") != "running":
+                break
+    if not slug:
+        return web.json_response({"ok": True, "consent": True,
+                                  "capture": "no station yet"})
+    err = _spawn_import(slug, True)
+    return web.json_response({"ok": True, "consent": True,
+                              "capture": err or "started"})
 
 
 @PromptServer.instance.routes.get("/music_studio/import/status")

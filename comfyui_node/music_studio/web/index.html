@@ -374,6 +374,13 @@
   #deck-line { font-size: .66rem; color: var(--cyan); letter-spacing: .08em;
     margin-top: .5rem; text-shadow: 0 0 6px #00e5ff50; opacity: .9;
     white-space: normal; overflow-wrap: anywhere; }
+  #consent-box { font-size: .66rem; line-height: 1.5; color: var(--text);
+    border: 1px solid var(--amber); border-radius: 6px; padding: .5rem .6rem;
+    margin-bottom: .55rem; background: #1a120a; box-shadow: 0 0 10px #ffb34730; }
+  #consent-box b { color: var(--amber); display: block; margin-bottom: .2rem; }
+  #consent-box a { color: var(--cyan); }
+  #consent-box button { display: block; width: 100%; margin-top: .45rem;
+    color: var(--amber); border-color: var(--amber); }
   #cap-state { font-size: .68rem; color: var(--dim); margin-bottom: .35rem;
                letter-spacing: .08em; text-transform: uppercase; }
   #cap-state.running { color: var(--red); text-shadow: 0 0 7px var(--red); }
@@ -579,6 +586,15 @@
         <div class="rail-h" title="The AI listening pass, which describes each of your tracks so the generator knows more than tempo and brightness. Pause it to hand the GPU back to the radio; it resumes where it stopped."
              >Dubbing
           <button id="dub-toggle" title="pause / resume the capture" disabled>⏵</button>
+        </div>
+        <div id="consent-box" hidden>
+          <b>AI listening pass — waiting for your OK.</b>
+          It describes every track (genre, instruments, mood) with NVIDIA
+          Music Flamingo, the biggest single quality jump for generated songs.
+          One-time <span id="consent-gb">17</span> GB download under
+          <a id="consent-link" href="https://huggingface.co/nvidia/music-flamingo-2601-hf" target="_blank" rel="noopener">NVIDIA's licence</a>.
+          Until then captures run on tempo/key numbers only.
+          <button class="small-btn" id="consent-accept">Accept &amp; start listening pass</button>
         </div>
         <div id="cap-state">no capture running</div>
         <div class="barwrap"><div class="bar" id="cap-stagebar"></div></div>
@@ -1190,6 +1206,29 @@ $("dub-toggle").onclick = async () => {
   pollCapture();
 };
 
+// ---- listening-pass consent: on by default, but the 17 GB NVIDIA download
+// never starts until this button is pressed once (radio/consent.py)
+async function pollConsent() {
+  try {
+    const c = await (await fetch("/music_studio/consent")).json();
+    $("consent-box").hidden = !!c.consent;
+    if (c.download_gb) $("consent-gb").textContent = c.download_gb;
+    if (c.model_url) $("consent-link").href = c.model_url;
+  } catch (e) {}
+}
+$("consent-accept").onclick = async () => {
+  $("consent-accept").disabled = true;
+  try {
+    const r = await (await fetch("/music_studio/consent", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accept: true }) })).json();
+    toast(r.capture === "started" ? "listening pass accepted — starting it now"
+          : "listening pass accepted" + (r.capture ? ` (${r.capture})` : ""));
+  } catch (e) { toast("could not reach the server"); }
+  $("consent-accept").disabled = false;
+  pollConsent(); pollCapture();
+};
+
 async function pollCapture() {
   let s;
   try { s = await (await fetch("/music_studio/import/status")).json(); }
@@ -1636,6 +1675,8 @@ spLoad();
 
 setInterval(refreshGauge, 30000);
 setInterval(pollCapture, 3000);
+setInterval(pollConsent, 10000);
+pollConsent();
 setInterval(pollGpu, 2500);
 setInterval(pollCritic, 5000);
 setInterval(kpLoad, 15000);

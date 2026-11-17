@@ -375,6 +375,15 @@ def main():
         # this model and a spare CUDA context by squeezing the model.
         # Headroom is made by releasing cache below, and by the music server
         # waiting for the card instead of crash-looping (see systemd/).
+        # last line of defence: this script can be run on its own, and this
+        # is the call that downloads 17 GB of NVIDIA weights
+        sys.path.insert(0, f"{BASE}/radio")
+        import consent
+        if not consent.given():
+            print("CAPTIONS NEED CONSENT: the listening pass downloads "
+                  f"{consent.MODEL_URL} (~{consent.DOWNLOAD_GB} GB). To accept: "
+                  + consent.HOW + ".", flush=True)
+            sys.exit(3)
         print("loading Music Flamingo 8-bit", flush=True)
         processor = AutoProcessor.from_pretrained(MODEL)
         model = MusicFlamingoForConditionalGeneration.from_pretrained(

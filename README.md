@@ -89,34 +89,44 @@ See **[docs/INSTALL.md](docs/INSTALL.md)** for the full walkthrough.
 
 ## Quickstart
 
-TAPEDECK has **no virtualenv of its own** — it is a ComfyUI custom node, and
-everything runs in the interpreter that runs ComfyUI. Below, that interpreter
-is `$COMFY_PY`. Full walkthrough in **[docs/INSTALL.md](docs/INSTALL.md)**.
+One command on Linux (Windows: inside WSL2). It checks the GPU, sets up
+ComfyUI with CUDA PyTorch, fetches the MiniMax Music 3 weights, points the
+deck at your music, starts everything and prints the deck's URL:
 
 ```bash
-# 0. ComfyUI 0.33+ installed, Music 3 weights in place (docs/INSTALL.md 1-2)
-export COMFY_PY=/path/to/ComfyUI/venv/bin/python
-export COMFY_DIR=/path/to/ComfyUI
-
-# 1. clone anywhere, link the deck into ComfyUI
 git clone https://github.com/CharlesMod/infinite-tapedeck tapedeck && cd tapedeck
-ln -s "$PWD/comfyui_node/music_studio" "$COMFY_DIR/custom_nodes/"
-echo "$PWD" > comfyui_node/music_studio/tapedeck_base.txt
-
-# 2. dependencies into that SAME interpreter
-$COMFY_PY -m pip install -r requirements.txt
-
-# 3. check the install before it does an hour of work
-$COMFY_PY analysis/preflight.py
-
-# 4. put music in ./library, then capture it
-#    the AI listening pass runs by default (--no-captions to skip)
-$COMFY_PY analysis/import_pipeline.py --station full-library
-
-# 5. run the spool daemon, open the deck, press PLAY
-$COMFY_PY radio/tank_daemon.py &
-# http://<host>:8188/extensions/music_studio/index.html
+./install.sh --music ~/Music
 ```
+
+or without cloning first:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/CharlesMod/infinite-tapedeck/main/install.sh | bash -s -- --music ~/Music
+```
+
+Then open `http://<host>:8188/extensions/music_studio/index.html` and press
+PLAY. The deck plays your own music while the first generated takes are made.
+
+**The AI listening pass** (NVIDIA Music Flamingo) is on by default — it is
+the biggest single quality difference — but its one-time ~17 GB download
+needs your OK: press **Accept & start listening pass** in the deck's Dubbing
+section (or capture with `--accept-flamingo`). Until then captures use
+tempo/key/energy numbers only.
+
+Day to day:
+
+```bash
+tapedeck status     # what is running, capture progress, the URL
+tapedeck stop | start | restart | logs
+tapedeck capture    # re-capture after adding music
+```
+
+Re-running `install.sh` is safe: every step skips work already done. Already
+have ComfyUI or the weights? `--comfy DIR`, `--python PATH`,
+`--weights-from DIR`. Everything is in `./install.sh --help`; the manual
+walkthrough is **[docs/INSTALL.md](docs/INSTALL.md)**, and
+**[AGENTS.md](AGENTS.md)** is the guide for an AI assistant helping you set
+it up.
 
 ## FAQ
 

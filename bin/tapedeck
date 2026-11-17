@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# tapedeck — start, stop and look at a ∞ TAPEDECK install.
+# Paths come from run/tapedeck.env, written by install.sh.
+#
+#   tapedeck start      ComfyUI (with the deck) + the radio daemon
+#   tapedeck stop       stop both (by saved PID; a running capture is left alone)
+#   tapedeck restart
+#   tapedeck status     what is running, capture progress, the deck URL
+#   tapedeck logs       follow ComfyUI + daemon logs
+#   tapedeck capture [--no-captions]   (re)capture the active station's library
+#   tapedeck open       print the deck URL
+set -uo pipefail
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+ENV="$HERE/run/tapedeck.env"
+[ -f "$ENV" ] || { echo "no $ENV — run install.sh first"; exit 1; }
+# shellcheck disable=SC1090
+. "$ENV"
+RUN="$TAPEDECK/run"
+url() { echo "http://$(hostname -s 2>/dev/null || echo localhost):$PORT/extensions/music_studio/index.html"; }
+alive() { [ -f "$RUN/$1.pid" ] && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null; }
+
+start() {
+  if alive comfy; then echo "ComfyUI already running (pid $(cat "$RUN/comfy.pid"))"
+  else
+    (cd "$COMFY" || exit 1
+     nohup "$PYBIN" main.py --listen 0.0.0.0 --port "$PORT" > "$RUN/comfy.log" 2>&1 &
+     echo $! > "$RUN/comfy.pid")
+    printf "starting ComfyUI on :%s " "$PORT"
+    for _ in $(seq 120); do
+      curl -sf -o /dev/null "http://127.0.0.1:$PORT/music_studio/status" && break
+      alive comfy || { echo; echo "ComfyUI exited — see $RUN/comfy.log"; tail -20 "$RUN/comfy.log"; exit 1; }
+      printf "."; sleep 1
+    done; echo " up"
+  fi
+  if alive daemon; then echo "radio daemon already running (pid $(cat "$RUN/daemon.pid"))"
+  else
+    (cd "$TAPEDECK" || exit 1
+     nohup "$PYBIN" radio/tank_daemon.py > "$RUN/daemon.log" 2>&1 &
+     echo $! > "$RUN/daemon.pid")
+    echo "radio daemon started"
+  fi
+  echo "deck: $(url)"
+}
+
+stop() {
+  for p in daemon comfy; do
+    if alive "$p"; then kill "$(cat "$RUN/$p.pid")" && echo "stopped $p"; fi
+    rm -f "$RUN/$p.pid"
+  done
+}
+
+status() {
+  for p in comfy daemon; do
+    if alive "$p"; then echo "$p: running (pid $(cat "$RUN/$p.pid"))"; else echo "$p: stopped"; fi
+  done
+  if alive comfy; then
+    local js
+    js=$(curl -sf "http://127.0.0.1:$PORT/music_studio/import/status") || return 0
+    "$PYBIN" - "$js" <<'PY'
+import json, sys
+d = json.loads(sys.argv[1])
+st = d.get("stages") or []
+i = d.get("stage_idx", -1)
+stage = st[i]["name"] if 0 <= i < len(st) else "-"
+line = (f"capture: {d.get('state')} {stage} {d.get('overall_pct', 0)}% "
+        f"({d.get('track_i', 0)}/{d.get('track_n', 0)} tracks)")
+if d.get("captions_pending_consent"):
+    line += "  — listening pass waiting for Accept in the deck"
+print(line)
+PY
+  fi
+  echo "deck: $(url)"
+}
+
+capture() {
+  alive comfy || { echo "start first: tapedeck start"; exit 1; }
+  local caps=true
+  [ "${1:-}" = "--no-captions" ] && caps=false
+  "$PYBIN" - "$PORT" "$caps" <<'PY'
+import json, sys, urllib.request
+port, caps = sys.argv[1], sys.argv[2] == "true"
+base = f"http://127.0.0.1:{port}/music_studio"
+sl = json.load(urllib.request.urlopen(base + "/stations"))
+active = sl.get("active")
+src = next((s["source"] for s in sl.get("stations", []) if s.get("slug") == active), None)
+if not src:
+    sys.exit("no active station")
+req = urllib.request.Request(base + "/import/start", method="POST",
+    data=json.dumps({"source": src, "with_captions": caps}).encode(),
+    headers={"Content-Type": "application/json"})
+try:
+    print("capture:", json.load(urllib.request.urlopen(req)))
+except urllib.error.HTTPError as e:
+    print("capture:", e.read().decode())
+PY
+}
+
+case "${1:-status}" in
+  start) start ;;
+  stop) stop ;;
+  restart) stop; sleep 2; start ;;
+  status) status ;;
+  logs) tail -n 40 -F "$RUN/comfy.log" "$RUN/daemon.log" ;;
+  capture) shift; capture "$@" ;;
+  open|url) url ;;
+  *) sed -n '2,12p' "$0"; exit 2 ;;
+esac

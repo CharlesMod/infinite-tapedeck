@@ -32,9 +32,10 @@ PROGRESS = f"{SCRIPTS}/import_progress.json"
 
 sys.path.insert(0, f"{BASE}/radio")
 import stations  # noqa: E402
+import consent  # noqa: E402
 
 USAGE = ("usage: import_pipeline.py --station SLUG [--no-captions] "
-         "[--describe TEXT] [--source DIR]")
+         "[--accept-flamingo] [--describe TEXT] [--source DIR]")
 
 
 def opt(name):
@@ -54,6 +55,10 @@ def opt(name):
 # written from that description. --with-captions is still accepted so older
 # instructions keep working.
 WITH_CAPTIONS = "--no-captions" not in sys.argv
+# Captions are on by default, but the model download needs the user's yes,
+# once (see radio/consent.py). Saying yes on the command line counts.
+if "--accept-flamingo" in sys.argv:
+    consent.record(True)
 DESCRIBE = opt("--describe")
 STATION = opt("--station")
 if STATION is None and "--source" in sys.argv:
@@ -542,6 +547,17 @@ def main():
     except OSError:
         _logf = None
     header(n_audio)
+    if WITH_CAPTIONS and not consent.given():
+        # on by default, never without a yes: capture everything else now,
+        # the deck shows an Accept button and resumes with captions after
+        WITH_CAPTIONS = False
+        _state["with_captions"] = False
+        _state["captions_pending_consent"] = True
+        note(f"AI listening pass is waiting for your OK ({consent.DOWNLOAD_GB} GB "
+             f"NVIDIA Music Flamingo download, {consent.MODEL_URL}).")
+        note("To accept: " + consent.HOW + ". Capturing without it for now.")
+        _state["log"] = (_state["log"] + ["listening pass waiting for your OK "
+                                          "— Accept in the deck"])[-25:]
     if WITH_CAPTIONS:
         blockers = caption_blockers()
         if blockers:
@@ -552,7 +568,7 @@ def main():
                  "takes will drift off-style. See docs/INSTALL.md step 6.")
         elif n_audio:
             announce_captions(n_audio)
-    elif n_audio:
+    elif n_audio and not _state.get("captions_pending_consent"):
         explain_no_captions(n_audio)
         _state["log"] = (_state["log"] + ["captions off by request — "
                                           "statistics only"])[-25:]

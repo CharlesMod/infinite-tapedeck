@@ -20,3 +20,13 @@ analysis/description.txt
 comfyui_node/music_studio/tapedeck_base.txt
 __pycache__/
 *.pyc
+# install.sh: ComfyUI lives in the repo by default; run/ holds pids, logs, env
+ComfyUI
+run/
+# runtime state written by the deck and the daemon
+radio/speed.json
+radio/speed.json.tmp
+radio/daemon_state.json
+radio/config.json
+radio/LISTENER_WAITING
+radio/PAUSE
