@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.parse
 
 from aiohttp import web
 
@@ -114,6 +115,27 @@ def _append_event(p, obj):
 
 # ------------------------------------------------------------------ playback
 
+def _library_pick(p):
+    """A random track from the station's own folder, for when there is
+    nothing generated to play yet (uncaptured station / empty spool).
+    id-less on purpose: no feedback, no 'consumed' event."""
+    try:
+        rels = [r for r in _source_audio(p["source"]) if r not in _excluded(p)]
+    except Exception:
+        return None
+    if not rels:
+        return None
+    rel = random.choice(rels)
+    return {
+        "id": None, "vein": None, "source": True, "library": True,
+        "vein_name": os.path.splitext(os.path.basename(rel))[0],
+        "url": "/music_studio/source_audio?path=" + urllib.parse.quote(rel),
+        "duration_s": None, "bpm": None, "score": None,
+        "caption": "From your library — " + rel, "lyrics": "",
+        "left_in_tank": 0,
+    }
+
+
 @PromptServer.instance.routes.get("/music_studio/next")
 async def next_track(request):
     global _last_vein
@@ -121,6 +143,9 @@ async def next_track(request):
     try:
         cards = _cards(p)
     except FileNotFoundError:
+        lib = _library_pick(p)
+        if lib:
+            return web.json_response(lib)
         return web.json_response({"empty": True,
                                   "hint": "station not captured yet"})
     mult = _weights(p)
@@ -156,6 +181,9 @@ async def next_track(request):
                 "score": t.get("score"), "caption": t.get("caption", ""),
                 "lyrics": t.get("lyrics", ""), "left_in_tank": 0,
             })
+        lib = _library_pick(p)
+        if lib:
+            return web.json_response(lib)
         return web.json_response({"empty": True,
                                   "hint": "fresh tape is being synthesized "
                                           "— give the deck a few minutes"})
@@ -484,11 +512,31 @@ async def deckstate(request):
     return web.json_response(st)
 
 
+_cpu_last = None
+
+
+def _cpu_util():
+    """Whole-machine CPU busy % since the previous call, from /proc/stat."""
+    global _cpu_last
+    try:
+        with open("/proc/stat") as f:
+            v = [int(x) for x in f.readline().split()[1:]]
+    except (OSError, ValueError):
+        return None
+    idle, total = v[3] + (v[4] if len(v) > 4 else 0), sum(v[:8])
+    prev, _cpu_last = _cpu_last, (idle, total)
+    if not prev or total <= prev[1]:
+        return None
+    return round(100 * (1 - (idle - prev[0]) / (total - prev[1])))
+
+
 @PromptServer.instance.routes.get("/music_studio/gpu")
 async def gpu(request):
     """Whole-card utilization and VRAM for the deck's meter bridge — any
     tenant counts (generation, captioner, games), which is the point:
-    the user should always be able to see that the machine is working."""
+    the user should always be able to see that the machine is working.
+    Also carries whole-machine CPU %, which the capture's CPU stages use."""
+    cpu = _cpu_util()
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total",
@@ -496,9 +544,9 @@ async def gpu(request):
             capture_output=True, text=True, timeout=5).stdout.strip()
         util, used, total = [int(x) for x in out.split(",")]
         return web.json_response({"util": util, "vram_used_mb": used,
-                                  "vram_total_mb": total})
+                                  "vram_total_mb": total, "cpu": cpu})
     except Exception as e:
-        return web.json_response({"error": repr(e)[:80]}, status=503)
+        return web.json_response({"error": repr(e)[:80], "cpu": cpu}, status=503)
 
 
 BIAS_MAX = 0.15
